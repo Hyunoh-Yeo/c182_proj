@@ -1,14 +1,3 @@
-from datasets import load_dataset
-
-ds = load_dataset("Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO-trainset", split="train")
-print(ds)
-print("columns:", ds.column_names)
-
-ex = ds[0]
-for k, v in ex.items():
-    print(f"\n===== {k} ({type(v).__name__}) =====")
-    print(repr(v)[:1500])
-
 """
 SecPO trainset format (Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO-trainset, 19,157 rows)
 
@@ -36,12 +25,16 @@ chosen_input: str         = Clean input, "{instruction}\n\n{chosen_data}" (not u
 rejected_input: str       = Injected attacking message (not used in training).
 
 # Note: <|eot_id|> is already included in the responses.
-
-Training uses:
-attacked prompt  = rejected_input_whole
-clean prompt     = chosen_data
-SecPO loss       = increase log p(chosen | attacked) and decrease log p(rejected | attacked),
-                   with reference log-probs from the undefended model on the clean prompt
-delimiters       = inserted right after the input header and right before its <|eot_id|>,
-                   in both the attacked and clean prompts
+# Note: SecPO reconstructs clean prompts with prompt.replace(rejected_input_whole, "", 1).
 """
+
+from datasets import load_dataset
+
+ds = load_dataset("Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO-trainset", split="train")
+print(ds)
+print("columns:", ds.column_names)
+
+ex = ds[0]
+for k, v in ex.items():
+    print(f"\n===== {k} ({type(v).__name__}) =====")
+    print(repr(v)[:1500])
