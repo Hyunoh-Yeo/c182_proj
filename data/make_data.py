@@ -39,7 +39,7 @@ def make_delims(n):
 
 
 def split_input(prompt):
-    """Split prompt to insert delimeters"""
+    """Split prompt to insert delimiters"""
     assert prompt.count(INPUT_HEADER) == 1, "expected exactly one input header"
 
     head, rest = prompt.split(INPUT_HEADER)
@@ -64,6 +64,7 @@ def clean_prompt(prompt, injection):
     assert clean.strip(), "removing the injection left an empty prompt"
     return clean
 
+
 def check_row(ex):
     """Return an error message, or None if the row is usable."""
     p, inj = ex["prompt"], ex["rejected_input_whole"]
@@ -86,7 +87,6 @@ def main():
     args = parser.parse_args()
 
     ds = load_dataset(DATASET, split="train")
-    opens, closes = make_delims(args.n)
 
     errors = {}
     for i, ex in enumerate(ds):
@@ -103,7 +103,7 @@ def main():
 
     def convert(ex):
         return {
-            "attacked": add_delims(ex["prompt"], opens, closes),
+            "attacked": add_delims(ex["prompt"], args.n),
             "clean": clean_prompt(ex["prompt"], ex["rejected_input_whole"]),
             "chosen": ex["chosen"],
             "rejected": ex["rejected"],
