@@ -56,7 +56,7 @@ def parse_args():
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_limit", type=int, default=-1, help="use only the first N train rows (sweeps)")
-    p.add_argument("--init", default="header", choices=["header", "mean", "normal", "zero"])
+    p.add_argument("--init", default="header", choices=["header", "mean", "normal", "std_normal", "zero"])
     return p.parse_args()
 
 
@@ -104,6 +104,7 @@ def init_delims(model, tok, ids, n_open, how="header"):
     header: open delimiters start from <|start_header_id|>, close delimiters from <|eot_id|>.
     mean:   mean of all vocabulary embeddings (Hewitt 2021; default of HF resize_token_embeddings).
     normal: N(0, initializer_range^2), how Llama initializes its own embeddings before pretraining.
+    std_normal: N(0, 1), as in DefensiveToken and LTBD.
     zero:   all-zero vectors, an uninformative start.
     """
     emb = model.get_input_embeddings().weight
@@ -116,6 +117,8 @@ def init_delims(model, tok, ids, n_open, how="header"):
         rows = emb.float().mean(dim=0, keepdim=True).repeat(len(ids), 1)
     elif how == "normal":
         rows = torch.randn(shape, device=emb.device) * model.config.initializer_range
+    elif how == "std_normal":
+        rows = torch.randn(shape, device=emb.device)
     else:
         rows = torch.zeros(shape, device=emb.device)
     return torch.nn.Parameter(rows.detach().clone())
@@ -215,6 +218,8 @@ def main():
     device = pick_device()
     out_dir = args.out.format(n=args.n, lr=args.lr, ga=args.grad_accum, init=args.init)
     os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, "config.json"), "w") as f:
+        json.dump(vars(args), f, indent=2)
     assert args.n >= 2 and args.n % 2 == 0, "n must be an even number >= 2"
 
     tok = AutoTokenizer.from_pretrained(args.model)
