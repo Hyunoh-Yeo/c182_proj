@@ -32,14 +32,15 @@ MIDDLE = "<|eot_id|><|start_header_id|>input<|end_header_id|>\n\n"
 END = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
 
 
+RESERVED_BASE = 200
+
 @cache
 def make_delims(n):
+    """Delimiters are unused Llama 3 reserved special tokens, so each is a single token id."""
     # n == 0 keeps the SecPO prompt unchanged (baseline)
     assert n >= 0 and n % 2 == 0, "n must be a non-negative even number"
-    
-    opens = tuple(f"<|data_open_{i}|>" for i in range(n // 2))
-    closes = tuple(f"<|data_close_{i}|>" for i in range(n // 2))
-    return opens, closes
+    names = tuple(f"<|reserved_special_token_{RESERVED_BASE + k}|>" for k in range(n))
+    return names[: n // 2], names[n // 2 :]
 
 
 def split_input(prompt):
@@ -56,6 +57,7 @@ def split_input(prompt):
 def add_delims(prompt, n):
     before, data, after = split_input(prompt)
     open_delims, close_delims = make_delims(n)
+    assert not any(d in prompt for d in open_delims + close_delims), "delimiter token already in prompt"
     return before + "".join(open_delims) + data + "".join(close_delims) + after
 
 

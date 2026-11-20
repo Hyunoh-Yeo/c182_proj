@@ -8,7 +8,7 @@ EXTRA=${EXTRA:---load_in_4bit}
 COMMON="--model $MODEL $EXTRA --train_limit 2000 --val_limit 100 --val_every 10 --save_every 1000 --log_every 1"
 
 if [ "$1" = "stage1" ]; then
-  for lr in 1e-3 1e-2 1e-1; do
+  for lr in 1e-4 1e-3 1e-2; do
     for ga in 32 256; do
       echo "=== lr=$lr grad_accum=$ga ==="
       python train/train_delims.py $COMMON --lr $lr --grad_accum $ga --init header
