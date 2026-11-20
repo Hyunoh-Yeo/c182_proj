@@ -4,10 +4,14 @@ Builds role-manipulated variants of one injected example and logs whether the ou
 contains the attacker string. Works with any Defense that exposes .tokenizer/.model;
 variants are raw chat messages, so SecPO's `input` role template is used when present.
 
-    python role_swap.py secpo --checkpoint <path-or-hf-id>
+    python additional/role_swap.py secpo --checkpoint <path-or-hf-id>
 """
 import argparse
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `import baselines` works from here
 
 import torch
 

@@ -2,11 +2,15 @@
 
 Expected: undefended prints the attacker string; SecPO / DefensiveToken do not.
 
-    python smoke_test.py undefended
-    python smoke_test.py secpo --checkpoint <path-or-hf-id>
-    python smoke_test.py defensivetoken --embeddings <path>
+    python baselines/smoke_test.py undefended
+    python baselines/smoke_test.py secpo --checkpoint <path-or-hf-id>
+    python baselines/smoke_test.py defensivetoken --embeddings <path>
 """
 import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so `import baselines` works from here
 
 from baselines import load
 
