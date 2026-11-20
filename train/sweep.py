@@ -2,8 +2,8 @@
 Hyperparameter sweep on a 2,000-row subset, one axis at a time. Works on Windows and Mac.
 lr:   learning rate at grad_accum 16, with N(0, 1) init (as in DefensiveToken and LTBD).
 ga:   grad_accum at a chosen lr.
-init: the other inits at a chosen lr and grad_accum.
-Usage: python train/sweep.py lr | ga <lr> | init <lr> <grad_accum>
+Init is fixed to N(0, 1) following DefensiveToken and LTBD.
+Usage: python train/sweep.py lr | ga <lr>
 """
 import subprocess
 import sys
@@ -28,6 +28,3 @@ if sys.argv[1] == "lr":
 elif sys.argv[1] == "ga":
     for ga in [32, 64]:
         run(sys.argv[2], ga, INIT)
-elif sys.argv[1] == "init":
-    for init in ["header", "mean", "zero"]:
-        run(sys.argv[2], int(sys.argv[3]), init)
