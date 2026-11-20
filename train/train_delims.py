@@ -88,26 +88,15 @@ def load_model(args, device):
     return model
 
 
-RESERVED_BASE = 200
-
-
-def delimiter_map(tok, n):
-    """Map our delimiter names to unused reserved tokens. Returns (name->reserved, ids, n_open)."""
+def delimiter_ids(tok, n):
+    """Token ids of the delimiters from make_data.py. Each must be a single token."""
     opens, closes = make_delims(n)
-    mapping, ids = {}, []
-    for k, name in enumerate(opens + closes):
-        reserved = f"<|reserved_special_token_{RESERVED_BASE + k}|>"
-        enc = tok.encode(reserved, add_special_tokens=False)
-        assert len(enc) == 1, f"{reserved} is not a single token: {enc}"
-        mapping[name] = reserved
+    ids = []
+    for name in opens + closes:
+        enc = tok.encode(name, add_special_tokens=False)
+        assert len(enc) == 1, f"{name} is not a single token: {enc}"
         ids.append(enc[0])
-    return mapping, ids, len(opens)
-
-
-def apply_map(text, mapping):
-    for name, reserved in mapping.items():
-        text = text.replace(name, reserved)
-    return text
+    return ids, len(opens)
 
 
 def init_delims(model, tok, ids, n_open, how="header"):
@@ -135,13 +124,12 @@ def encode(tok, prompt, response, max_length):
     return p + r, [IGNORE] * len(p) + r
 
 
-def build_examples(tok, ds, max_length, mapping):
+def build_examples(tok, ds, max_length):
     out, skipped = [], 0
     for ex in ds:
-        attacked = apply_map(ex["attacked"], mapping)
         parts = [
-            encode(tok, attacked, ex["chosen"], max_length),
-            encode(tok, attacked, ex["rejected"], max_length),
+            encode(tok, ex["attacked"], ex["chosen"], max_length),
+            encode(tok, ex["attacked"], ex["rejected"], max_length),
             encode(tok, ex["clean"], ex["chosen"], max_length),
             encode(tok, ex["clean"], ex["rejected"], max_length),
         ]
@@ -177,6 +165,7 @@ def seq_logps(model, embeds, labels, attn):
 
 
 def embed_with_delims(model, ids, delim_ids, delims):
+    """Replace the embeddings at delimiter ids with the trainable vectors; the embedding matrix stays frozen."""
     emb = model.get_input_embeddings()(ids)
     for k, tid in enumerate(delim_ids):
         pos = ids.eq(tid).unsqueeze(-1)
@@ -220,23 +209,23 @@ def main():
     device = pick_device()
     out_dir = args.out.format(n=args.n, lr=args.lr, ga=args.grad_accum, init=args.init)
     os.makedirs(out_dir, exist_ok=True)
-    assert args.n >= 2, "training needs at least one open and one close delimiter"
+    assert args.n >= 2 and args.n % 2 == 0, "n must be an even number >= 2"
 
     tok = AutoTokenizer.from_pretrained(args.model)
     pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.convert_tokens_to_ids("<|eot_id|>")
     model = load_model(args, device)
-    mapping, delim_ids, n_open = delimiter_map(tok, args.n)
+    delim_ids, n_open = delimiter_ids(tok, args.n)
     delims = init_delims(model, tok, delim_ids, n_open, args.init).to(device)
     vocab_norm = model.get_input_embeddings().weight.float().norm(dim=-1).mean().item()
-    print(f"device={device} delimiters={mapping} ids={delim_ids} trainable params={delims.numel()}")
+    print(f"device={device} delimiter ids={delim_ids} trainable params={delims.numel()}")
     print(f"init={args.init} delimiter norms={delims.norm(dim=-1).tolist()} mean vocab norm={vocab_norm:.4f}")
 
     ds = load_from_disk(args.data.format(n=args.n)).shuffle(seed=args.seed)
     val_ds, train_ds = ds.select(range(args.val_size)), ds.select(range(args.val_size, len(ds)))
     if args.train_limit > 0:
         train_ds = train_ds.select(range(min(args.train_limit, len(train_ds))))
-    train, sk_t = build_examples(tok, train_ds, args.max_length, mapping)
-    val, sk_v = build_examples(tok, val_ds, args.max_length, mapping)
+    train, sk_t = build_examples(tok, train_ds, args.max_length)
+    val, sk_v = build_examples(tok, val_ds, args.max_length)
     val = val[: args.val_limit]
     print(f"train={len(train)} (skipped {sk_t} over-length) val={len(val)} (skipped {sk_v})")
 
@@ -245,7 +234,7 @@ def main():
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
     print(f"optimizer steps={total} (effective batch {args.grad_accum})")
 
-    log = open(os.path.join(out_dir, "log.jsonl"), "a")
+    log = open(os.path.join(out_dir, "log.jsonl"), "w")
     step, run_loss, run_margin, t0 = 0, 0.0, 0.0, time.time()
     for i, ex in enumerate(train):
         pc, pr = pair_logps(model, ex[:2], pad_id, device, delim_ids, delims)
@@ -258,12 +247,13 @@ def main():
 
         if (i + 1) % args.grad_accum:
             continue
+        cur_lr = sched.get_last_lr()[0]  # lr used by this step
         opt.step()
         sched.step()
         opt.zero_grad(set_to_none=True)
         step += 1
 
-        rec = {"step": step, "loss": run_loss, "policy_margin": run_margin, "lr": sched.get_last_lr()[0],
+        rec = {"step": step, "loss": run_loss, "policy_margin": run_margin, "lr": cur_lr,
                "delim_norms": [round(x, 4) for x in delims.detach().norm(dim=-1).tolist()],
                "vocab_norm": round(vocab_norm, 4), "sec_per_step": (time.time() - t0) / step}
         if step % args.log_every == 0 or step == 1:
@@ -275,8 +265,7 @@ def main():
         log.write(json.dumps(rec) + "\n")
         log.flush()
         if step % args.save_every == 0 or step == total:
-            torch.save({"delims": delims.detach().cpu(), "mapping": mapping, "delim_ids": delim_ids,
-                        "n": args.n, "step": step},
+            torch.save({"delims": delims.detach().cpu(), "delim_ids": delim_ids, "n": args.n, "step": step},
                        os.path.join(out_dir, f"delims_step{step}.pt"))
         run_loss, run_margin = 0.0, 0.0
         if step >= total:

@@ -1,1 +1,3 @@
 data/processed/
+outputs/
+__pycache__/
