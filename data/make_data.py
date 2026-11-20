@@ -19,13 +19,17 @@ Usage:
 
 """
 
+import json
+import os
 import argparse
 from datasets import load_dataset
 from functools import cache
 
 DATASET = "Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO-trainset"
-INPUT_HEADER = "<|start_header_id|>input<|end_header_id|>\n\n"
-EOT = "<|eot_id|>"
+
+PREFIX = "<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n"
+MIDDLE = "<|eot_id|><|start_header_id|>input<|end_header_id|>\n\n"
+END = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
 
 
 @cache
@@ -39,13 +43,14 @@ def make_delims(n):
 
 
 def split_input(prompt):
-    """Split prompt to insert delimiters"""
-    assert prompt.count(INPUT_HEADER) == 1, "expected exactly one input header"
+    """Split prompt at the first MIDDLE and the final END to insert delimiters"""
+    assert MIDDLE in prompt, "no input header"
+    assert prompt.endswith(END), "prompt does not end with the assistant header"
 
-    head, rest = prompt.split(INPUT_HEADER)
-    data, tail = rest.split(EOT, 1)
+    head, rest = prompt.split(MIDDLE, 1)
+    data = rest[: -len(END)]
     # delimiters are placed around {data}
-    return head + INPUT_HEADER, data, EOT + tail
+    return head + MIDDLE, data, END
 
 
 def add_delims(prompt, n):
@@ -66,17 +71,22 @@ def clean_prompt(prompt, injection):
 
 
 def check_row(ex):
-    """Return an error message, or None if the row is usable."""
+    """
+    Return an error message, or None if the row is usable.
+    Template: PREFIX {instruction} MIDDLE {data} END
+    """
     p, inj = ex["prompt"], ex["rejected_input_whole"]
-    if p.count(INPUT_HEADER) != 1:
-        return "input header count != 1"
+    if not p.startswith(PREFIX):
+        return "prompt does not start with the user header"
+    if not p.endswith(END):
+        return "prompt does not end with the assistant header"
+    if MIDDLE not in p[len(PREFIX): -len(END)]:
+        return "no input header after the instruction"
     if p.count(inj) != 1:
         return "injection count != 1"
     _, data, _ = split_input(p)
     if inj not in data:
         return "injection not inside input data"
-    if ex["chosen_data"] not in data:
-        return "chosen_data not inside input data"
     return None
 
 
@@ -85,6 +95,7 @@ def main():
     parser.add_argument("--n", type=int, default=2)
     parser.add_argument("--out", default="data/processed/secpo_n{n}")
     args = parser.parse_args()
+    path = args.out.format(n=args.n)
 
     ds = load_dataset(DATASET, split="train")
 
@@ -96,7 +107,12 @@ def main():
     n_bad = sum(len(v) for v in errors.values())
     print(f"format check: {len(ds) - n_bad}/{len(ds)} ok")
     for err, idx in errors.items():
-        print(f"  {err}: {len(idx)} rows (first: {idx[:5]})")
+        print(f"  {err}: {len(idx)} rows")
+    if errors:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(f"{path}_bad_rows.json", "w") as f:
+            json.dump(errors, f, indent=2)
+        print(f"  bad row indices saved to {path}_bad_rows.json")
 
     bad = {i for idx in errors.values() for i in idx}
     ds = ds.filter(lambda _, i: i not in bad, with_indices=True)
@@ -110,7 +126,6 @@ def main():
         }
 
     out = ds.map(convert, remove_columns=ds.column_names)
-    path = args.out.format(n=args.n)
     out.save_to_disk(path)
     print(f"saved {len(out)} rows to {path}")
 
