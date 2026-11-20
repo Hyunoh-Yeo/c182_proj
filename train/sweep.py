@@ -1,7 +1,7 @@
 """
 Hyperparameter sweep on a 2,000-row subset. Works on Windows and Mac.
 Stage 1: learning rate x effective batch, header init.
-Stage 2: random init with the best stage-1 setting (the header run is already in stage 1).
+Stage 2: the other inits with the best stage-1 setting (the header run is already in stage 1).
 Usage: python train/sweep.py stage1      or   python train/sweep.py stage2 <lr> <grad_accum>
 """
 import subprocess
@@ -25,4 +25,5 @@ if sys.argv[1] == "stage1":
         for ga in [16, 64]:
             run(lr, ga, "header")
 elif sys.argv[1] == "stage2":
-    run(sys.argv[2], int(sys.argv[3]), "random")
+    for init in ["mean", "normal", "zero"]:
+        run(sys.argv[2], int(sys.argv[3]), init)

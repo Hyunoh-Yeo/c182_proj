@@ -56,7 +56,7 @@ def parse_args():
     p.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16", "float32"])
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_limit", type=int, default=-1, help="use only the first N train rows (sweeps)")
-    p.add_argument("--init", default="header", choices=["header", "random"])
+    p.add_argument("--init", default="header", choices=["header", "mean", "normal", "zero"])
     return p.parse_args()
 
 
@@ -71,7 +71,7 @@ def pick_device():
 def load_model(args, device):
     dtype = getattr(torch, args.dtype)
     kwargs = {"dtype": dtype}
-    if args.load_in_4bit:
+    if args.load_in_4bit: # for quantization
         from transformers import BitsAndBytesConfig
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype
@@ -102,16 +102,22 @@ def delimiter_ids(tok, n):
 def init_delims(model, tok, ids, n_open, how="header"):
     """
     header: open delimiters start from <|start_header_id|>, close delimiters from <|eot_id|>.
-    random: Gaussian directions rescaled to the mean vocabulary embedding norm.
+    mean:   mean of all vocabulary embeddings (Hewitt 2021; default of HF resize_token_embeddings).
+    normal: N(0, initializer_range^2), how Llama initializes its own embeddings before pretraining.
+    zero:   all-zero vectors, an uninformative start.
     """
     emb = model.get_input_embeddings().weight
+    shape = (len(ids), emb.shape[1])
     if how == "header":
         hdr = tok.convert_tokens_to_ids("<|start_header_id|>")
         eot = tok.convert_tokens_to_ids("<|eot_id|>")
         rows = torch.stack([emb[hdr] if i < n_open else emb[eot] for i in range(len(ids))]).float()
+    elif how == "mean":
+        rows = emb.float().mean(dim=0, keepdim=True).repeat(len(ids), 1)
+    elif how == "normal":
+        rows = torch.randn(shape, device=emb.device) * model.config.initializer_range
     else:
-        rows = torch.randn(len(ids), emb.shape[1], device=emb.device)
-        rows = rows / rows.norm(dim=-1, keepdim=True) * emb.float().norm(dim=-1).mean()
+        rows = torch.zeros(shape, device=emb.device)
     return torch.nn.Parameter(rows.detach().clone())
 
 
@@ -212,7 +218,7 @@ def main():
     assert args.n >= 2 and args.n % 2 == 0, "n must be an even number >= 2"
 
     tok = AutoTokenizer.from_pretrained(args.model)
-    pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.convert_tokens_to_ids("<|eot_id|>")
+    pad_id = tok.convert_tokens_to_ids("<|finetune_right_pad_id|>")
     model = load_model(args, device)
     delim_ids, n_open = delimiter_ids(tok, args.n)
     delims = init_delims(model, tok, delim_ids, n_open, args.init).to(device)
@@ -230,7 +236,9 @@ def main():
     print(f"train={len(train)} (skipped {sk_t} over-length) val={len(val)} (skipped {sk_v})")
 
     opt = torch.optim.AdamW([delims], lr=args.lr, weight_decay=0.0)
-    total = args.max_steps if args.max_steps > 0 else len(train) // args.grad_accum
+    total = len(train) // args.grad_accum
+    if args.max_steps > 0:
+        total = min(total, args.max_steps)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s, total) / total)))
     print(f"optimizer steps={total} (effective batch {args.grad_accum})")
 
