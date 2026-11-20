@@ -1,11 +1,8 @@
 """
 Train learnable delimiter embeddings on a frozen LLM with the SecPO loss.
 
-The model is fully frozen. Delimiter names from data/make_data.py (e.g. <|data_open_0|>) are
-not in the Llama vocabulary, so before tokenizing we map each one to an unused Llama 3 reserved
-special token (<|reserved_special_token_200+k|>), which is a single token id. At forward time the
-input embeddings at those ids are replaced by a separate trainable tensor of shape (n, d).
-Only that tensor is updated; no tokenizer or embedding-matrix changes are needed.
+data/make_data.py marks the data with unused Llama 3 reserved special tokens
+(<|reserved_special_token_200+k|>), each a single token id.
 
 SecPO loss (Sizhe-Chen/SecPO, src/secpo/loss.py):
   policy    log p(y | attacked prompt with delimiters)    ours, trainable delimiters
