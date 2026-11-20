@@ -200,15 +200,18 @@ def secpo_loss(pc, pr, rc, rr, beta):
 
 @torch.no_grad()
 def evaluate(model, val, pad_id, device, delim_ids, delims, beta):
-    losses, margins = [], []
+    losses, margins, chosen, rejected = [], [], [], []
     for ex in val:
         pc, pr = pair_logps(model, ex[:2], pad_id, device, delim_ids, delims)
         rc, rr = pair_logps(model, ex[2:], pad_id, device)
         loss, m = secpo_loss(pc, pr, rc, rr, beta)
         losses.append(loss.item())
         margins.append(m.item())
-    acc = sum(m > 0 for m in margins) / len(margins)
-    return sum(losses) / len(losses), sum(margins) / len(margins), acc
+        chosen.append(pc.item())
+        rejected.append(pr.item())
+    mean = lambda xs: sum(xs) / len(xs)
+    return {"val_loss": mean(losses), "val_margin": mean(margins), "val_margin_acc": mean([m > 0 for m in margins]),
+            "val_chosen_logp": mean(chosen), "val_rejected_logp": mean(rejected)}
 
 
 def main():
@@ -239,6 +242,8 @@ def main():
     val, sk_v = build_examples(tok, val_ds, args.max_length)
     val = val[: args.val_limit]
     print(f"train={len(train)} (skipped {sk_t} over-length) val={len(val)} (skipped {sk_v})")
+    assert len(train) >= args.grad_accum, f"only {len(train)} train rows, fewer than grad_accum={args.grad_accum}"
+    assert len(val) > 0, "validation set is empty"
 
     opt = torch.optim.AdamW([delims], lr=args.lr, weight_decay=0.0)
     total = len(train) // args.grad_accum
@@ -248,7 +253,18 @@ def main():
     print(f"optimizer steps={total} (effective batch {args.grad_accum})")
 
     log = open(os.path.join(out_dir, "log.jsonl"), "w")
-    step, run_loss, run_margin, t0 = 0, 0.0, 0.0, time.time()
+
+    def norms():
+        return [round(x, 4) for x in delims.detach().norm(dim=-1).tolist()]
+
+    # step 0: validation before any update, the starting point of every curve
+    rec = {"step": 0, "delim_norms": norms(), "vocab_norm": round(vocab_norm, 4)}
+    rec.update(evaluate(model, val, pad_id, device, delim_ids, delims, args.beta))
+    print(f"[val] step 0: loss {rec['val_loss']:.4f} margin {rec['val_margin']:.3f} acc {rec['val_margin_acc']:.3f}")
+    log.write(json.dumps(rec) + "\n")
+    log.flush()
+
+    step, run_loss, run_margin, run_c, run_r, t0 = 0, 0.0, 0.0, 0.0, 0.0, time.time()
     for i, ex in enumerate(train):
         pc, pr = pair_logps(model, ex[:2], pad_id, device, delim_ids, delims)
         with torch.no_grad():
@@ -257,6 +273,8 @@ def main():
         (loss / args.grad_accum).backward()
         run_loss += loss.item() / args.grad_accum
         run_margin += margin.item() / args.grad_accum
+        run_c += pc.item() / args.grad_accum
+        run_r += pr.item() / args.grad_accum
 
         if (i + 1) % args.grad_accum:
             continue
@@ -266,21 +284,20 @@ def main():
         opt.zero_grad(set_to_none=True)
         step += 1
 
-        rec = {"step": step, "loss": run_loss, "policy_margin": run_margin, "lr": cur_lr,
-               "delim_norms": [round(x, 4) for x in delims.detach().norm(dim=-1).tolist()],
-               "vocab_norm": round(vocab_norm, 4), "sec_per_step": (time.time() - t0) / step}
+        rec = {"step": step, "loss": run_loss, "policy_margin": run_margin, "chosen_logp": run_c,
+               "rejected_logp": run_r, "lr": cur_lr, "delim_norms": norms(), "vocab_norm": round(vocab_norm, 4),
+               "sec_per_step": (time.time() - t0) / step}
         if step % args.log_every == 0 or step == 1:
             print(json.dumps(rec))
         if step % args.val_every == 0 or step == total:
-            vl, vm, va = evaluate(model, val, pad_id, device, delim_ids, delims, args.beta)
-            rec.update({"val_loss": vl, "val_margin": vm, "val_margin_acc": va})
-            print(f"[val] step {step}: loss {vl:.4f} margin {vm:.3f} acc {va:.3f}")
+            rec.update(evaluate(model, val, pad_id, device, delim_ids, delims, args.beta))
+            print(f"[val] step {step}: loss {rec['val_loss']:.4f} margin {rec['val_margin']:.3f} acc {rec['val_margin_acc']:.3f}")
         log.write(json.dumps(rec) + "\n")
         log.flush()
         if step % args.save_every == 0 or step == total:
             torch.save({"delims": delims.detach().cpu(), "delim_ids": delim_ids, "n": args.n, "step": step},
                        os.path.join(out_dir, f"delims_step{step}.pt"))
-        run_loss, run_margin = 0.0, 0.0
+        run_loss, run_margin, run_c, run_r = 0.0, 0.0, 0.0, 0.0
         if step >= total:
             break
     print(f"done. saved to {out_dir}")
