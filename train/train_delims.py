@@ -200,7 +200,7 @@ def secpo_loss(pc, pr, rc, rr, beta):
 
 @torch.no_grad()
 def evaluate(model, val, pad_id, device, delim_ids, delims, beta):
-    losses, margins, chosen, rejected = [], [], [], []
+    losses, margins, chosen, rejected, beats_ref = [], [], [], [], []
     for ex in val:
         pc, pr = pair_logps(model, ex[:2], pad_id, device, delim_ids, delims)
         rc, rr = pair_logps(model, ex[2:], pad_id, device)
@@ -209,8 +209,10 @@ def evaluate(model, val, pad_id, device, delim_ids, delims, beta):
         margins.append(m.item())
         chosen.append(pc.item())
         rejected.append(pr.item())
+        beats_ref.append(((pc - pr) >= (rc - rr)).item())  # SecPO's goal: policy margin >= reference margin
     mean = lambda xs: sum(xs) / len(xs)
     return {"val_loss": mean(losses), "val_margin": mean(margins), "val_margin_acc": mean([m > 0 for m in margins]),
+            "val_beats_ref": mean(beats_ref),
             "val_chosen_logp": mean(chosen), "val_rejected_logp": mean(rejected)}
 
 
@@ -260,7 +262,7 @@ def main():
     # step 0: validation before any update, the starting point of every curve
     rec = {"step": 0, "delim_norms": norms(), "vocab_norm": round(vocab_norm, 4)}
     rec.update(evaluate(model, val, pad_id, device, delim_ids, delims, args.beta))
-    print(f"[val] step 0: loss {rec['val_loss']:.4f} margin {rec['val_margin']:.3f} acc {rec['val_margin_acc']:.3f}")
+    print(f"[val] step 0: loss {rec['val_loss']:.4f} margin {rec['val_margin']:.3f} acc {rec['val_margin_acc']:.3f} beats_ref {rec['val_beats_ref']:.3f}")
     log.write(json.dumps(rec) + "\n")
     log.flush()
 
@@ -291,7 +293,7 @@ def main():
             print(json.dumps(rec))
         if step % args.val_every == 0 or step == total:
             rec.update(evaluate(model, val, pad_id, device, delim_ids, delims, args.beta))
-            print(f"[val] step {step}: loss {rec['val_loss']:.4f} margin {rec['val_margin']:.3f} acc {rec['val_margin_acc']:.3f}")
+            print(f"[val] step {step}: loss {rec['val_loss']:.4f} margin {rec['val_margin']:.3f} acc {rec['val_margin_acc']:.3f} beats_ref {rec['val_beats_ref']:.3f}")
         log.write(json.dumps(rec) + "\n")
         log.flush()
         if step % args.save_every == 0 or step == total:
