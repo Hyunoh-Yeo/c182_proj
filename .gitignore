@@ -1,3 +1,4 @@
 data/processed/
 outputs/
 __pycache__/
+train/check_train.py
