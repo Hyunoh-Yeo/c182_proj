@@ -17,6 +17,14 @@ Usage:
 <|start_header_id|>input<|end_header_id|>\n\n{data_with_injection}<|eot_id|>
 <|start_header_id|>assistant<|end_header_id|>\n\n
 
+<|begin_of_text|><|start_header_id|>user<|end_header_id|>\n\n{instruction}<|eot_id|>
+<|special_delimiter1|><|special_delimiter2|><|special_delimiter3|>\n\n{data_with_injection}<|special_delimiter4|>
+<|start_header_id|>assistant<|end_header_id|>\n\n
+
+1. initialize <|special_delimiter1|> with <|start_header_id|>, initialize <|special_delimiter2|> with input, ..., <|special_delimiter4|> with <|eot_id|> 
+2. train the three new embeddings
+
+# low priority: tuning hyper parameters, tuning #special delimiters
 """
 
 import json
