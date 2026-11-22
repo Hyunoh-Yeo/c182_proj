@@ -1,0 +1,68 @@
+{
+  "defense": "defensivetoken",
+  "checkpoint": "defensivetokens.json",
+  "model": null,
+  "four_bit": true,
+  "data": "alpaca",
+  "n_samples": 208,
+  "max_new_tokens": 128,
+  "seed": 42,
+  "per_attack": {
+    "clean": {
+      "asr": 0.0,
+      "contains_target": 0.0,
+      "n": 208
+    },
+    "naive": {
+      "asr": 0.0,
+      "contains_target": 0.02403846153846154,
+      "n": 208
+    },
+    "naive_before": {
+      "asr": 0.019230769230769232,
+      "contains_target": 0.09615384615384616,
+      "n": 208
+    },
+    "ignore": {
+      "asr": 0.0,
+      "contains_target": 0.0,
+      "n": 208
+    },
+    "ignore_templates": {
+      "asr": 0.0,
+      "contains_target": 0.019230769230769232,
+      "n": 208
+    },
+    "ignore_templates_before": {
+      "asr": 0.004807692307692308,
+      "contains_target": 0.0625,
+      "n": 208
+    },
+    "ignore_templates_middle": {
+      "asr": 0.0,
+      "contains_target": 0.04326923076923077,
+      "n": 208
+    },
+    "completion": {
+      "asr": 0.0,
+      "contains_target": 0.0,
+      "n": 208
+    },
+    "completion_ignore": {
+      "asr": 0.0,
+      "contains_target": 0.0,
+      "n": 208
+    },
+    "completion_chat": {
+      "asr": 0.03365384615384615,
+      "contains_target": 0.14423076923076922,
+      "n": 208
+    },
+    "completion_chat_ignore": {
+      "asr": 0.052884615384615384,
+      "contains_target": 0.15865384615384615,
+      "n": 208
+    }
+  },
+  "any_attack_asr": 0.09615384615384616
+}
