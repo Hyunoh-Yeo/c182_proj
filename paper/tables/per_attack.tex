@@ -1,0 +1,20 @@
+\begin{tabular}{lrrrrr}
+\toprule
+Attack & Undef. & No delim. & DefTok & SecPO & Ours \\
+\midrule
+\multicolumn{6}{l}{\emph{static}} \\
+\texttt{naive} & 12.5 & 1.0 & 0.0 & 0.0 & 0.0 \\
+\texttt{naive\_before} & 6.7 & 0.5 & 1.9 & 0.0 & 0.0 \\
+\texttt{ignore} & 69.7 & 9.1 & 0.0 & 0.0 & 0.0 \\
+\texttt{ignore\_templates} & 31.7 & 4.8 & 0.0 & 0.0 & 0.0 \\
+\texttt{ignore\_templates\_before} & 28.4 & 4.3 & 0.5 & 0.0 & 0.0 \\
+\texttt{ignore\_templates\_middle} & 10.6 & 1.0 & 0.0 & 0.0 & 0.0 \\
+\texttt{completion} & 60.6 & 51.0 & 0.0 & 0.0 & 0.0 \\
+\texttt{completion\_ignore} & 56.2 & 20.2 & 0.0 & 0.0 & 0.0 \\
+\multicolumn{6}{l}{\emph{adaptive}} \\
+\texttt{completion\_chat} & 90.9 & 92.3 & 3.4 & 0.0 & 0.0 \\
+\texttt{completion\_chat\_ignore} & 84.6 & 84.6 & 5.3 & 0.0 & 1.9 \\
+\midrule
+Any of the 10 & 96.6 & 98.1 & 9.6 & 0.0 & 1.9 \\
+\bottomrule
+\end{tabular}
