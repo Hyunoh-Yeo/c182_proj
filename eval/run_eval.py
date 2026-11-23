@@ -6,31 +6,42 @@ Usage (Mac debug):
 Usage (CUDA, full):
     python eval/run_eval.py secpo --checkpoint Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO
     python eval/run_eval.py defensivetoken --embeddings defensivetokens.json
+    python eval/run_eval.py delims --checkpoint checkpoints/insert_n2_lr0.1_ga16/delims_step1163.pt
+    python eval/run_eval.py delims --checkpoint ... --no-delims       # same template, no delimiters
 
-Writes per-row results to eval/results/<baseline>_<timestamp>.csv and prints ASR.
+Use the same --sample N --seed S for every defense so all of them see the same rows. SEP is
+ordered by task type, so --limit N (first N rows) is only for debugging, not for results.
+
+Writes per-row results to eval/results/<baseline>_<mode>_<timestamp>.csv and prints ASR.
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import json
+import random
 import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from baselines import load  # noqa: E402
 
 from eval.metrics import attack_success_rate, witness_hit  # noqa: E402
 
-SEP_PATH = Path("data/SEP_dataset.json")
-RESULTS_DIR = Path("eval/results")
+SEP_PATH = ROOT / "data" / "SEP_dataset.json"
+RESULTS_DIR = ROOT / "eval" / "results"
 
 
-def load_sep(path: Path = SEP_PATH, limit: int | None = None) -> list[dict]:
+def load_sep(path: Path = SEP_PATH, limit: int | None = None, sample: int | None = None,
+             seed: int = 0) -> list[tuple[int, dict]]:
+    """Returns (original SEP index, row) pairs. `sample` draws a seeded random subset."""
     with open(path) as f:
-        rows = json.load(f)
+        rows = list(enumerate(json.load(f)))
+    if sample is not None:
+        rows = [rows[i] for i in sorted(random.Random(seed).sample(range(len(rows)), sample))]
     if limit is not None:
         rows = rows[:limit]
     return rows
@@ -38,13 +49,13 @@ def load_sep(path: Path = SEP_PATH, limit: int | None = None) -> list[dict]:
 
 def run_eval(
     defense,
-    rows: list[dict],
+    rows: list[tuple[int, dict]],
     max_new_tokens: int = 256,
     attacked: bool = True,
 ) -> list[dict]:
     """Run the defense on each SEP row. Returns a list of per-row result dicts."""
     results = []
-    for i, row in enumerate(rows):
+    for n, (i, row) in enumerate(rows):
         instruction = row["system_prompt_clean"]
         data = row["prompt_instructed"] if attacked else row["prompt_clean"]
         witness = row["witness"]
@@ -65,7 +76,7 @@ def run_eval(
             }
         )
         running_asr = attack_success_rate([r["hit"] for r in results])
-        print(f"  [{i + 1}/{len(rows)}] hit={hit} running ASR={running_asr:.3f}")
+        print(f"  [{n + 1}/{len(rows)}] row {i} hit={hit} running ASR={running_asr:.3f}", flush=True)
     return results
 
 
@@ -82,11 +93,14 @@ def save_results(results: list[dict], baseline_name: str, mode: str) -> Path:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("name", choices=["undefended", "secpo", "defensivetoken"])
-    ap.add_argument("--model", help="base model id (undefended / defensivetoken)")
-    ap.add_argument("--checkpoint", help="SecPO checkpoint path or HF id")
+    ap.add_argument("name", choices=["undefended", "secpo", "defensivetoken", "delims"])
+    ap.add_argument("--model", help="base model id (undefended / defensivetoken / delims)")
+    ap.add_argument("--checkpoint", help="secpo: path or HF id; delims: delims_step<N>.pt")
     ap.add_argument("--embeddings", help="DefensiveToken vectors JSON")
+    ap.add_argument("--no-delims", action="store_true", help="delims: drop the delimiters (ablation)")
     ap.add_argument("--four-bit", action="store_true")
+    ap.add_argument("--sample", type=int, default=None, help="seeded random subset of N rows (use for results)")
+    ap.add_argument("--seed", type=int, default=0, help="seed for --sample")
     ap.add_argument("--limit", type=int, default=None, help="only run first N rows (debug)")
     ap.add_argument("--max-new-tokens", type=int, default=256)
     ap.add_argument("--mode", choices=["attacked", "clean"], default="attacked",
@@ -98,20 +112,25 @@ def main():
         if args.name == "secpo":
             ap.error("--model does not apply to secpo; use --checkpoint")
         kw["model_id"] = args.model
-    if args.name == "secpo":
+    if args.name in ("secpo", "delims"):
         if not args.checkpoint:
-            ap.error("secpo needs --checkpoint")
+            ap.error(f"{args.name} needs --checkpoint")
         kw["checkpoint"] = args.checkpoint
     if args.name == "defensivetoken":
         if not args.embeddings:
             ap.error("defensivetoken needs --embeddings")
         kw["embeddings_path"] = args.embeddings
-
-    print(f"loading baseline: {args.name}")
-    defense = load(args.name, **kw)
+    if args.name == "delims":
+        kw["use_delims"] = not args.no_delims
+    elif args.no_delims:
+        ap.error("--no-delims only applies to delims")
+    tag = args.name + ("_nodelims" if args.no_delims else "")
 
     print(f"loading SEP from {SEP_PATH}")
-    rows = load_sep(limit=args.limit)
+    rows = load_sep(limit=args.limit, sample=args.sample, seed=args.seed)
+
+    print(f"loading baseline: {tag}")
+    defense = load(args.name, **kw)
     print(f"evaluating {len(rows)} rows (mode={args.mode})")
 
     results = run_eval(
@@ -121,10 +140,10 @@ def main():
         attacked=(args.mode == "attacked"),
     )
     asr = attack_success_rate([r["hit"] for r in results])
-    out_path = save_results(results, args.name, args.mode)
+    out_path = save_results(results, tag, args.mode)
 
     print(f"\n{'=' * 50}")
-    print(f"baseline:      {args.name}")
+    print(f"baseline:      {tag}")
     print(f"mode:          {args.mode}")
     print(f"rows:          {len(rows)}")
     print(f"ASR / hit rate: {asr:.4f}")
