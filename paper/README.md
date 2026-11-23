@@ -6,8 +6,9 @@ Regenerate every figure and table from files already in the repo (no GPU, no mod
 python paper/make_figures.py
 ```
 
-Inputs: `results/attacks/*.jsonl` and `checkpoints/insert_n2_lr0.1_ga16/log.jsonl`.
-Outputs: `paper/figures/{method,asr,training,norms}.pdf`, `paper/tables/per_attack.tex`.
+Inputs: `results/attacks/*.jsonl` (AlpacaFarm, data filter on), `additional/nofilter/*.jsonl` (filter off,
+including the step-300/600 checkpoints), `results/sep/*.csv` and `checkpoints/insert_n2_lr0.1_ga16/log.jsonl`.
+Outputs: `paper/figures/{method,asr,training,norms}.pdf`, `paper/tables/{per_attack,sep,filter}.tex`.
 
 ## Compiling
 

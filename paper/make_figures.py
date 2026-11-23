@@ -3,7 +3,10 @@
     python paper/make_figures.py
 
 Inputs (no model or GPU needed):
-  results/attacks/*.jsonl                      saved outputs of attacks/run_attacks.py
+  results/attacks/*.jsonl                      AlpacaFarm outputs, data filter on (main results)
+  additional/nofilter/*.jsonl                  the same runs with the data filter off; also the
+                                               step-300/600 checkpoints, which were only run this way
+  results/sep/*.csv                            SEP outputs
   checkpoints/insert_n2_lr0.1_ga16/log.jsonl   training log of the final run
 Outputs:
   paper/figures/*.pdf, paper/tables/*.tex
@@ -22,11 +25,16 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyBboxPatch  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "attacks"))
-from summarize_results import NOT_IN_ANY, any_attack, load, wilson  # noqa: E402
+from summarize_results import any_attack, fisher, load, wilson  # noqa: E402
 from injections import ADAPTIVE, STATIC, attacked  # noqa: E402
+from eval.summarize_sep import load as load_sep, word_hit  # noqa: E402
 
 RUN = ROOT / "checkpoints" / "insert_n2_lr0.1_ga16"
+MAIN = ROOT / "results" / "attacks"
+NOFILTER = ROOT / "additional" / "nofilter"
+SEP = ROOT / "results" / "sep"
 FIG = ROOT / "paper" / "figures"
 TAB = ROOT / "paper" / "tables"
 
@@ -38,7 +46,11 @@ DEFENSES = [
     ("secpo", "SecPO (LoRA fine-tune)"),
     ("ours_s1163", "Ours (2 vectors, final)"),
 ]
+# Training-curve checkpoints: all three exist only with the filter off, so the curve uses those runs.
 CHECKPOINTS = [("ours_s300", 300), ("ours_s600", 600), ("ours_s1163", 1163)]
+SEP_FILES = {"undefended": "undefended", "no-delims": "no-delims", "defensivetoken": "defensivetoken",
+             "secpo": "secpo", "ours_s1163": "ours"}
+FILTER_ROWS = [("undefended", "Undefended"), ("no-delims", "No delimiters"), ("ours_s1163", "Ours (final)")]
 
 # Colors: one highlight for our method, neutral gray for everything else (one job: identity of "ours").
 BLUE, ORANGE, GRAY, INK, MUTED = "#2a78d6", "#eb6834", "#a3a29d", "#0b0b0b", "#52514e"
@@ -54,8 +66,25 @@ plt.rcParams.update({
 
 
 def runs():
-    return {k: load(ROOT / "results" / "attacks" / f"{k}.jsonl")
-            for k in {d for d, _ in DEFENSES} | {c for c, _ in CHECKPOINTS}}
+    """Main (filtered) AlpacaFarm runs, and the unfiltered ones under the key ("nofilter", name)."""
+    R = {k: load(MAIN / f"{k}.jsonl") for k, _ in DEFENSES}
+    for k in {c for c, _ in CHECKPOINTS} | {k for k, _ in FILTER_ROWS}:
+        R["nofilter", k] = load(NOFILTER / f"{k}.jsonl")
+    return R
+
+
+def sep_runs():
+    """defense -> list of (output, witness); every defense must cover the same SEP rows."""
+    S = {k: load_sep(SEP / f"{f}.csv") for k, f in SEP_FILES.items()}
+    idx = {k: sorted(r["idx"] for r in rows) for k, rows in S.items()}
+    assert len({tuple(v) for v in idx.values()}) == 1, "SEP runs cover different rows"
+    return S
+
+
+def sep_rate(rows):
+    k, n = sum(word_hit(r["output"], r["witness"]) for r in rows), len(rows)
+    lo, hi = wilson(k, n)
+    return k, n, k / n, lo, hi
 
 
 def asr_any(by_attack):
@@ -113,23 +142,31 @@ def fig_method():
 
 
 # ---------------------------------------------------------------- Figure: ASR per defense
-def fig_asr(R):
-    rows = [(label, *asr_any(R[k]), k) for k, label in DEFENSES]
-    fig, ax = plt.subplots(figsize=(5.5, 1.9))
-    for y, (label, k, n, p, lo, hi, key) in enumerate(reversed(rows)):
-        c = BLUE if key.startswith("ours") else GRAY
-        ax.barh(y, 100 * p, height=0.6, color=c)
-        ax.errorbar(100 * p, y, xerr=[[100 * (p - lo)], [100 * (hi - p)]], fmt="none",
-                    ecolor=INK, elinewidth=0.9, capsize=2.5)
-        ax.text(100 * hi + 1.5, y, f"{100 * p:.1f}%  ({k}/{n})", va="center", fontsize=8, color=INK)
-    ax.set_yticks(range(len(rows)), [r[0] for r in reversed(rows)])
-    ax.set_xlim(0, 118)
-    ax.set_xticks([0, 25, 50, 75, 100])
-    ax.set_xlabel("Attack success rate, any of 10 attacks (%)")
-    ax.grid(axis="y", visible=False)
+def fig_asr(R, S):
+    """Left: AlpacaFarm, any of 10 attacks. Right: SEP, witness as a whole word. Both with Wilson CIs."""
+    panels = [
+        ([(label, *asr_any(R[k]), k) for k, label in DEFENSES], 150, [0, 25, 50, 75, 100],
+         "AlpacaFarm: any of 10 attacks (%)"),
+        ([(label, *sep_rate(S[k]), k) for k, label in DEFENSES], 70, [0, 15, 30, 45],
+         "SEP: witness in output (%)"),
+    ]
+    fig, axes = plt.subplots(1, 2, figsize=(6.8, 1.9), sharey=True, gridspec_kw={"wspace": 0.1})
+    for ax, (rows, xmax, ticks, xlabel) in zip(axes, panels):
+        for y, (label, k, n, p, lo, hi, key) in enumerate(reversed(rows)):
+            c = BLUE if key.startswith("ours") else GRAY
+            ax.barh(y, 100 * p, height=0.6, color=c)
+            ax.errorbar(100 * p, y, xerr=[[100 * (p - lo)], [100 * (hi - p)]], fmt="none",
+                        ecolor=INK, elinewidth=0.9, capsize=2.5)
+            ax.text(100 * hi + xmax * 0.015, y, f"{100 * p:.1f}%  ({k}/{n})", va="center", fontsize=7.5,
+                    color=INK)
+        ax.set_yticks(range(len(rows)), [r[0] for r in reversed(rows)])
+        ax.set_xlim(0, xmax)
+        ax.set_xticks(ticks)
+        ax.set_xlabel(xlabel)
+        ax.grid(axis="y", visible=False)
     fig.savefig(FIG / "asr.pdf")
     plt.close(fig)
-    return rows
+    return panels[0][0], panels[1][0]
 
 
 # ---------------------------------------------------------------- Figure: training curves
@@ -162,14 +199,14 @@ def fig_training(R):
     a1.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, frameon=False, fontsize=7.5,
                handlelength=1.5, columnspacing=1.2)
 
-    ck = [(step, *asr_any(R[k])) for k, step in CHECKPOINTS]
+    ck = [(step, *asr_any(R["nofilter", k])) for k, step in CHECKPOINTS]
     a2.plot(vs, [100 * (1 - b) for b in vb], color=BLUE, lw=2, marker="o", ms=4,
             label="validation pairs with margin below reference (%)")
     xs = [c[0] for c in ck]
     ys = [100 * c[3] for c in ck]
     err = [[100 * (c[3] - c[4]) for c in ck], [100 * (c[5] - c[3]) for c in ck]]
     a2.errorbar(xs, ys, yerr=err, color=ORANGE, lw=2, marker="s", ms=5, capsize=3,
-                label="AlpacaFarm attack success (%), 95% Wilson CI")
+                label="AlpacaFarm attack success, filter off (%), 95% Wilson CI")
     for x, y in zip(xs, ys):
         a2.text(x + 15, y + 2, f"{y:.1f}", fontsize=7.5, color=INK)
     a2.set_ylim(-3, 100)
@@ -227,20 +264,61 @@ def tab_per_attack(R):
     (TAB / "per_attack.tex").write_text("\n".join(lines) + "\n")
 
 
+def rate_cell(k, n):
+    lo, hi = wilson(k, n)
+    return f"{100 * k / n:.1f} [{100 * lo:.1f}, {100 * hi:.1f}]"
+
+
+def tab_sep(S):
+    ref = sep_rate(S["ours_s1163"])
+    lines = [r"\begin{tabular}{lrrr}", r"\toprule",
+             r"Defense & Broken / 500 & ASR \% [95\% CI] & $p$ vs.\ ours \\", r"\midrule"]
+    for k, label in DEFENSES:
+        hit, n, *_ = sep_rate(S[k])
+        p = "--" if k == "ours_s1163" else (lambda v: "$<$0.0001" if v < 1e-4 else f"{v:.2f}")(
+            fisher(hit, n, ref[0], ref[1]))
+        lines.append(f"{label} & {hit} & {rate_cell(hit, n)} & {p} \\\\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    (TAB / "sep.tex").write_text("\n".join(lines) + "\n")
+
+
+def tab_filter(R):
+    """Same runs with the data filter off and on: any-attack ASR and the two attacks it affects."""
+    def per(by, a):
+        outs = by[a]
+        return f"{100 * sum(attacked(o) for o in outs.values()) / len(outs):.1f}"
+    lines = [r"\begin{tabular}{lcccccc}", r"\toprule",
+             r" & \multicolumn{2}{c}{Any of 10 attacks} & \multicolumn{2}{c}{\texttt{completion\_chat}}"
+             r" & \multicolumn{2}{c}{\texttt{completion\_chat\_ignore}} \\",
+             r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}",
+             r"Defense & off & on & off & on & off & on \\", r"\midrule"]
+    for k, label in FILTER_ROWS:
+        off, on = R["nofilter", k], R[k]
+        cells = [rate_cell(*any_attack(off, attacked)), rate_cell(*any_attack(on, attacked)),
+                 per(off, "completion_chat"), per(on, "completion_chat"),
+                 per(off, "completion_chat_ignore"), per(on, "completion_chat_ignore")]
+        lines.append(label + " & " + " & ".join(cells) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}"]
+    (TAB / "filter.tex").write_text("\n".join(lines) + "\n")
+
+
 def main():
     FIG.mkdir(parents=True, exist_ok=True)
     TAB.mkdir(parents=True, exist_ok=True)
-    R = runs()
+    R, S = runs(), sep_runs()
     fig_method()
-    rows = fig_asr(R)
+    rows, sep_rows = fig_asr(R, S)
     va, ck = fig_training(R)
     norms = fig_norms()
     tab_per_attack(R)
+    tab_sep(S)
+    tab_filter(R)
 
-    print("any-attack ASR (Wilson 95%):")
-    for label, k, n, p, lo, hi, _ in rows:
-        print(f"  {label:38s} {k:3d}/{n} = {100 * p:5.1f}%  [{100 * lo:.1f}, {100 * hi:.1f}]")
-    print("checkpoints:", [(s, f"{100 * p:.1f}%") for s, _, _, p, _, _ in ck])
+    for name, table in [("AlpacaFarm any-attack ASR", rows), ("SEP whole-word ASR", sep_rows)]:
+        print(f"{name} (Wilson 95%):")
+        for label, k, n, p, lo, hi, _ in table:
+            print(f"  {label:38s} {k:3d}/{n} = {100 * p:5.1f}%  [{100 * lo:.1f}, {100 * hi:.1f}]")
+    print("checkpoints, filter off:", [(s, f"{100 * p:.1f}%") for s, _, _, p, _, _ in ck])
     print("val loss at 300/600/1163:", [(s, round(l, 4)) for s, l, _ in va if s in (300, 600, 1163)])
     print("final delimiter norms %.1f %.1f, vocab mean %.2f" % norms)
     print(f"wrote {sorted(p.name for p in FIG.iterdir())} and {sorted(p.name for p in TAB.iterdir())}")
