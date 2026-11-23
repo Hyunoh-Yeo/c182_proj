@@ -8,6 +8,7 @@ Usage (CUDA, full):
     python eval/run_eval.py defensivetoken --embeddings defensivetokens.json
     python eval/run_eval.py delims --checkpoint checkpoints/insert_n2_lr0.1_ga16/delims_step1163.pt
     python eval/run_eval.py delims --checkpoint ... --no-delims       # same template, no delimiters
+    python eval/run_eval.py delims --checkpoint ... --no-filter       # don't strip special tokens from data
 
 Use the same --sample N --seed S for every defense so all of them see the same rows. SEP is
 ordered by task type, so --limit N (first N rows) is only for debugging, not for results.
@@ -98,6 +99,8 @@ def main():
     ap.add_argument("--checkpoint", help="secpo: path or HF id; delims: delims_step<N>.pt")
     ap.add_argument("--embeddings", help="DefensiveToken vectors JSON")
     ap.add_argument("--no-delims", action="store_true", help="delims: drop the delimiters (ablation)")
+    ap.add_argument("--no-filter", action="store_true",
+                    help="delims: don't strip Llama control tokens / our delimiters from the data")
     ap.add_argument("--four-bit", action="store_true")
     ap.add_argument("--sample", type=int, default=None, help="seeded random subset of N rows (use for results)")
     ap.add_argument("--seed", type=int, default=0, help="seed for --sample")
@@ -122,9 +125,10 @@ def main():
         kw["embeddings_path"] = args.embeddings
     if args.name == "delims":
         kw["use_delims"] = not args.no_delims
-    elif args.no_delims:
-        ap.error("--no-delims only applies to delims")
-    tag = args.name + ("_nodelims" if args.no_delims else "")
+        kw["filter_data"] = not args.no_filter
+    elif args.no_delims or args.no_filter:
+        ap.error("--no-delims and --no-filter only apply to delims")
+    tag = args.name + ("_nodelims" if args.no_delims else "") + ("_nofilter" if args.no_filter else "")
 
     print(f"loading SEP from {SEP_PATH}")
     rows = load_sep(limit=args.limit, sample=args.sample, seed=args.seed)

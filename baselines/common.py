@@ -96,6 +96,32 @@ def chat_ids(tokenizer, msgs: list[dict]) -> torch.Tensor:
     return tokenizer(text, add_special_tokens=False, return_tensors="pt").input_ids
 
 
+# The 8 named Llama-3 control tokens that SecPO's chat template removes from untrusted data
+# (llama_untrusted_delimiters in Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO/chat_template.jinja).
+LLAMA3_CONTROL_TOKENS = (
+    "<|begin_of_text|>",
+    "<|end_of_text|>",
+    "<|finetune_right_pad_id|>",
+    "<|start_header_id|>",
+    "<|end_header_id|>",
+    "<|eom_id|>",
+    "<|eot_id|>",
+    "<|python_tag|>",
+)
+
+
+def recursive_filter(s: str, filters) -> str:
+    """Remove every filter string from untrusted text, repeating until nothing changes, so an
+    attacker can't hide one token inside another (e.g. '<|eot<|eot_id|>_id|>'). Same fixed-point
+    loop as SecPO's template and DefensiveToken's demo.py."""
+    while True:
+        orig = s
+        for f in filters:
+            s = s.replace(f, "")
+        if s == orig:
+            return s
+
+
 def _messages(system: str | None, *rest: dict) -> list[dict]:
     msgs = [{"role": "system", "content": system}] if system else []
     return msgs + list(rest)

@@ -10,6 +10,12 @@ wrapped around the untrusted data:
 The delimiters are unused reserved special tokens, so the trained vectors are written into
 their rows of the input embedding matrix. That is the same as embed_with_delims() in training
 (which swaps the embedding at those ids) and lets us use the normal Defense.generate().
+
+Untrusted data is filtered before templating (filter_data=True, the default): the 8 Llama-3
+control tokens SecPO's template removes, plus our own delimiter tokens, are stripped recursively.
+This gives ours the same protection SecPO has, and stops an attacker from writing our close
+delimiter into the data. filter_data=False is the unfiltered setting used for the results in
+results/attacks/ that predate this change.
 """
 from __future__ import annotations
 
@@ -19,7 +25,7 @@ import sys
 
 import torch
 
-from .common import BASE_MODEL, Defense, load_hf
+from .common import BASE_MODEL, LLAMA3_CONTROL_TOKENS, Defense, load_hf, recursive_filter
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "data"))
 from make_data import END, MIDDLE, PREFIX, make_delims  # noqa: E402
@@ -30,18 +36,24 @@ SYSTEM_BLOCK = "<|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|>
 class Delims(Defense):
     name = "delims"
 
-    def __init__(self, model, tokenizer, n: int, use_delims: bool = True):
+    def __init__(self, model, tokenizer, n: int, use_delims: bool = True, filter_data: bool = True):
         super().__init__(model, tokenizer)
         self.n = n
         self.use_delims = use_delims  # False = same template without delimiters (ablation)
+        self.filter_data = filter_data
         opens, closes = make_delims(n)
         self.open, self.close = "".join(opens), "".join(closes)
+        # Strip our delimiter names even in the no-delimiter ablation, so the two runs see
+        # identical data and differ only in the delimiters.
+        self.filters = LLAMA3_CONTROL_TOKENS + tuple(opens) + tuple(closes)
 
     def build_input_ids(self, system, instruction, data):
         head = PREFIX
         if system:  # training data has no system block; this is only for benchmarks that pass one
             head = PREFIX.replace("<|begin_of_text|>", "<|begin_of_text|>" + SYSTEM_BLOCK.format(system=system), 1)
         if data:
+            if self.filter_data:
+                data = recursive_filter(data, self.filters)
             if self.use_delims:
                 data = self.open + data + self.close
             text = head + instruction + MIDDLE + data + END
@@ -55,6 +67,7 @@ def load_delims(
     model_id: str | None = None,
     four_bit: bool = False,
     use_delims: bool = True,
+    filter_data: bool = True,
 ) -> Delims:
     """checkpoint: a delims_step{N}.pt saved by train/train_delims.py.
 
@@ -82,4 +95,4 @@ def load_delims(
             for vec, tid in zip(ckpt["delims"], ids):
                 emb.weight[tid] = vec.to(emb.weight.device, emb.weight.dtype)
     model.eval()
-    return Delims(model, tok, n=ckpt["n"], use_delims=use_delims)
+    return Delims(model, tok, n=ckpt["n"], use_delims=use_delims, filter_data=filter_data)

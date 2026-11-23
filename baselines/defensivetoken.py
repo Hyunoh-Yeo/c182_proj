@@ -22,7 +22,7 @@ import os
 
 import torch
 
-from .common import BASE_MODEL, Defense, load_hf
+from .common import BASE_MODEL, Defense, load_hf, recursive_filter
 
 N_TOKENS = 5
 
@@ -34,17 +34,6 @@ LLAMA31_DT_TEMPLATE = """{%- if add_defensive_tokens %}\n{{- '[DefensiveToken0][
         {{- '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n'+ message['content'] | trim + '\\n\\n' + '<|eot_id|>' }}\n
     {%- endfor %}\n
     {%- if add_generation_prompt %}\n{{- '<|start_header_id|>assistant<|end_header_id|>\\n' }}\n{%- endif %}\n"""
-
-
-def recursive_filter(s: str, filters: list[str]) -> str:
-    """Remove every special token from untrusted text, repeating until nothing changes
-    (so an attacker can't hide one inside another). Same as demo.py."""
-    while True:
-        orig = s
-        for f in filters:
-            s = s.replace(f, "")
-        if s == orig:
-            return s
 
 
 class DefensiveToken(Defense):
@@ -59,6 +48,8 @@ class DefensiveToken(Defense):
         # The benchmark's own `system` prompt (if any) is merged into the trusted turn.
         trusted = f"{system}\n\n{instruction}" if system else instruction
         if data:
+            # As in the released demo.py. For Llama-3.1 all_special_tokens is only BOS, EOT and the
+            # 5 DefensiveTokens, so header tokens get through; we keep this to match the release.
             data = recursive_filter(data, self.tokenizer.all_special_tokens)
             msgs = [{"role": "system", "content": trusted}, {"role": "user", "content": data}]
         else:

@@ -10,6 +10,7 @@ shared Defense interface. A clean run (no injection) is also done to check utili
     python attacks/run_attacks.py defensivetoken --embeddings defensivetokens.json
     python attacks/run_attacks.py delims --checkpoint outputs/<run>/delims_step<N>.pt
     python attacks/run_attacks.py delims --checkpoint ... --no-delims      # same template, no delimiters
+    python attacks/run_attacks.py delims --checkpoint ... --no-filter      # don't strip special tokens from data
 
 Data: `alpaca` = the 208 AlpacaFarm samples with an input (davinci_003_outputs.json, as in
 Meta_SecAlign); `builtin` = a few hand-written samples for a quick check.
@@ -83,8 +84,9 @@ def load_defense(a, ap):
         kw["embeddings_path"] = a.embeddings
     if a.name == "delims":
         kw["use_delims"] = not a.no_delims
-    elif a.no_delims:
-        ap.error("--no-delims only applies to delims")
+        kw["filter_data"] = not a.no_filter
+    elif a.no_delims or a.no_filter:
+        ap.error("--no-delims and --no-filter only apply to delims")
     return load(a.name, **kw)
 
 
@@ -111,6 +113,9 @@ def main():
     ap.add_argument("--embeddings", help="defensivetoken: defensivetokens.json or setup.py dir")
     ap.add_argument("--model", help="base model id, e.g. meta-llama/Llama-3.2-1B-Instruct")
     ap.add_argument("--no-delims", action="store_true", help="delims: drop the delimiters (ablation)")
+    ap.add_argument("--no-filter", action="store_true",
+                    help="delims: don't strip Llama control tokens / our delimiters from the data "
+                         "(the setting of the pre-filter results in results/attacks/)")
     ap.add_argument("--four-bit", action="store_true")
     ap.add_argument("--data", default="alpaca", choices=["alpaca", "builtin"])
     ap.add_argument("--limit", type=int, default=-1, help="use only the first N samples")
@@ -127,7 +132,7 @@ def main():
     d = load_defense(a, ap)
     attacks = pick_attacks(a, d)
     runs = ({} if a.no_clean else {"clean": None}) | attacks
-    tag = a.name + ("_nodelims" if a.no_delims else "")
+    tag = a.name + ("_nodelims" if a.no_delims else "") + ("_nofilter" if a.no_filter else "")
     print(f"[{tag}] {len(samples)} samples x {len(runs)} runs: {list(runs)}")
 
     os.makedirs(a.out, exist_ok=True)
@@ -160,6 +165,7 @@ def main():
     n_att = sum(1 for k in runs if k != "clean")
     summary = {
         "defense": tag, "checkpoint": a.checkpoint or a.embeddings, "model": a.model, "four_bit": a.four_bit,
+        "filter_data": (not a.no_filter) if a.name == "delims" else None,
         "data": a.data, "n_samples": len(samples), "max_new_tokens": a.max_new_tokens, "seed": a.seed,
         "per_attack": {k: {"asr": v["asr"] / v["n"], "contains_target": v["contains"] / v["n"], "n": v["n"]}
                        for k, v in stats.items()},
