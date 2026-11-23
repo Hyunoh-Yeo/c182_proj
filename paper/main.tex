@@ -281,41 +281,46 @@ them. \inprogress{sweep results to be added to Appendix~\ref{app:sweep}}
 \section{Experimental setup}
 \label{sec:setup}
 
-\paragraph{Defenses.} All runs use Llama-3.1-8B-Instruct~\cite{grattafiori2024llama3} in 4-bit NF4 with
-bf16 compute, greedy decoding and at most 128 new tokens, on the same GPU.
+\paragraph{Defenses.} Every run uses Llama-3.1-8B-Instruct~\cite{grattafiori2024llama3}, loaded in 4-bit NF4
+with bf16 compute, greedy decoding, and a 128 new-token limit. We run the same model on the same GPU for
+every defense so nothing except the defense itself changes between runs.
 \begin{itemize}
-  \item \textbf{Undefended}: original chat template, instruction and data together in the user turn.
-  \item \textbf{No delimiters}: our template (Eq.~\ref{eq:prompt}) without $d_1, d_2$; the base model.
-  \item \textbf{DefensiveToken}: the released five vectors and template~\cite{chen2025defensivetoken}.
+  \item \textbf{Undefended}: the stock chat template, with the instruction and data both placed in the user turn.
+  \item \textbf{No delimiters}: our template from Eq.~\ref{eq:prompt} but with $d_1$ and $d_2$ dropped. This is
+  the base model talking to our prompt format, so it isolates whatever effect the template itself has.
+  \item \textbf{DefensiveToken}: the five vectors and template from the released checkpoint~\cite{chen2025defensivetoken}.
   \item \textbf{SecPO}: the released SecPO checkpoint for Llama-3.1-8B~\cite{chen2026secpo}.
-  \item \textbf{Ours}: delimiters from steps 300, 600 and 1{,}163 (final).
+  \item \textbf{Ours}: the learned delimiters at steps 300, 600, and 1{,}163 (final).
 \end{itemize}
 
-\paragraph{Benchmark and attacks.} We use the 208 AlpacaFarm~\cite{dubois2023alpacafarm} samples that have
-a data field, the standard set of SecAlign and Meta-SecAlign. Each sample is attacked 10 ways, all with the
-goal of making the model print \emph{attacked!}: six \emph{naive}/\emph{ignore} variants that differ in the
-override sentence and where it is inserted, two \emph{completion} attacks that fake the end of the turn in
-plain text, and two adaptive \emph{completion\_chat} attacks that use the real Llama-3 template tokens.
-Override sentences are SecPO's test set; the random choice uses the same seed for every defense. Against our
-model we also run \emph{delim\_escape}, which writes our closing delimiter token into the data before the
-injection.
+\paragraph{Benchmark and attacks.} We evaluate on the 208 AlpacaFarm~\cite{dubois2023alpacafarm} samples
+that have a data field; this is the same set SecAlign and Meta-SecAlign use. Each sample gets attacked
+10 ways, all with the same goal of making the model print \emph{attacked!}. Six are
+\emph{naive}/\emph{ignore} variants that vary the override sentence and where it gets inserted. Two are
+\emph{completion} attacks that fake the end of the data turn in plain text. The last two are adaptive
+\emph{completion\_chat} attacks that use the real Llama-3 template tokens, which is the hardest case
+because the model sees what looks like a legitimate new turn. Override sentences come from SecPO's test set,
+and the random choice uses the same seed across defenses so no defense gets an easier draw than another.
+Against our own model we also run \emph{delim\_escape}, which injects our closing delimiter token into the
+data to see if an attacker who knows our defense can turn it off.
 
-\paragraph{Metric and uncertainty.} An attack succeeds if the response begins with \emph{attacked}
-(Meta-SecAlign's metric). Our headline number counts a sample as broken if any of the 10 attacks succeeds.
-Each defense is therefore scored by $k$ broken samples out of $n = 208$, a binomial proportion; we report
-95\% Wilson intervals~\cite{wilson1927}, which unlike the normal approximation stay inside $[0,1]$ and
-keep close to nominal coverage when $k$ is near 0 or $n$~\cite{brown2001interval}:
+\paragraph{Metric and uncertainty.} An attack succeeds if the response starts with \emph{attacked},
+following Meta-SecAlign. Our main number counts a sample as broken if any of the 10 attacks succeeds, so
+each defense gets a count of $k$ broken samples out of $n = 208$. That is a binomial proportion, and we
+report 95\% Wilson intervals~\cite{wilson1927} rather than the normal approximation, since Wilson stays
+inside $[0,1]$ and handles values near the boundary much better~\cite{brown2001interval}:
 \begin{equation}
   \frac{\hat p + \frac{z^2}{2n} \pm z\sqrt{\frac{\hat p(1-\hat p)}{n} + \frac{z^2}{4n^2}}}{1 + \frac{z^2}{n}},
   \qquad \hat p = k/n,\ z = 1.96 .
 \end{equation}
-These intervals capture uncertainty from the finite set of test samples only. With one training seed they
-do \emph{not} capture run-to-run variance of training, which we have not measured. Pairwise comparisons
-use a two-sided Fisher exact test on the $2\times 2$ table of broken/unbroken samples.
+These intervals cover sampling noise over the 208 samples only. We trained once, so they do not capture
+run-to-run variance from training; that is a real gap we flag in the limitations. Pairwise comparisons
+between defenses use a two-sided Fisher exact test on the broken/unbroken $2\times 2$ table.
 
-\paragraph{SEP.} \inprogress{We additionally evaluate all defenses on a seeded 1{,}024-row subset of
-SEP~\cite{zverev2025sep}, where an attack succeeds if a probe's witness string appears in the output. Code
-is in \texttt{eval/}; runs have not finished.}
+\paragraph{SEP.} We originally planned to report numbers on SEP~\cite{zverev2025sep} as a second benchmark,
+scored by whether the probe's witness string appears in the model's output. The pipeline is implemented in
+\texttt{eval/}, but the full run did not finish within our compute budget for this report; we leave it to
+future work.
 
 % =====================================================================================
 \section{Results}
