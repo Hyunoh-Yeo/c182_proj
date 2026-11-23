@@ -3,6 +3,7 @@
   "checkpoint": null,
   "model": null,
   "four_bit": true,
+  "filter_data": true,
   "data": "alpaca",
   "n_samples": 208,
   "max_new_tokens": 128,
@@ -54,15 +55,15 @@
       "n": 208
     },
     "completion_chat": {
-      "asr": 0.9086538461538461,
-      "contains_target": 0.9951923076923077,
+      "asr": 0.8990384615384616,
+      "contains_target": 0.9855769230769231,
       "n": 208
     },
     "completion_chat_ignore": {
-      "asr": 0.8461538461538461,
-      "contains_target": 0.9471153846153846,
+      "asr": 0.75,
+      "contains_target": 0.875,
       "n": 208
     }
   },
-  "any_attack_asr": 0.9663461538461539
+  "any_attack_asr": 0.9567307692307693
 }

@@ -1,0 +1,16 @@
+{
+  "name": "defensivetoken",
+  "model": null,
+  "checkpoint": null,
+  "embeddings": "defensivetokens.json",
+  "no_delims": false,
+  "no_filter": false,
+  "four_bit": true,
+  "sample": 500,
+  "seed": 42,
+  "limit": null,
+  "max_new_tokens": 256,
+  "mode": "attacked",
+  "rows": 500,
+  "asr": 0.038
+}

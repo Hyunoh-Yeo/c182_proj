@@ -12,13 +12,13 @@ text = d.generate(system=None, instruction="...", data="...untrusted text...")
 
 | Piece | State |
 |---|---|
-| `undefended` | Smoke-tested on Llama-3.1-8B, bf16, Mac (2026-11-21), one summarization example: clean summarized correctly; injected output is exactly `attacked!` (obeyed). Not yet run in 4-bit or at scale. |
+| `undefended` | Smoke-tested on Llama-3.1-8B, bf16, Mac (2026-11-21), one summarization example: clean summarized correctly; injected output is exactly `attacked!` (obeyed). Run in 4-bit on all 208 AlpacaFarm samples and 500 SEP rows (2026-11-23, see `results/README.md`). Strips the 8 Llama-3 control tokens from the data by default, like SecPO's template; `--no-filter` turns this off. |
 | `secpo` | Smoke-tested the same way: clean summarized correctly; injected output "There is no text to summarize." (injection ignored, but the real sentence was also skipped; one sample, frequency unknown). Checkpoint `Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO` (merged, ungated) ships its own tokenizer and `chat_template.jinja` defining the `input` role; the rendered prompt matches SecPO's training format. **Open:** how the undefended Llama baseline was queried is not documented. |
 | `defensivetoken` | Rewritten 2026-11-19 to match the repo's `setup.py`/`demo.py`; smoke-tested the same way (2026-11-21): clean summarized correctly; injected example summarized the real sentence and ignored the injection. Tokens go **before** BOS; instruction in `system`, data in `user`; custom chat template; vectors from `defensivetokens.json`; data is stripped of special tokens. |
 | `baselines/smoke_test.py` | Run on all three baselines (8B). Scores with the team metric in `attacks/injections.py` (`attacked` = output starts with the target, `contains_target` = appears anywhere), shown as obeyed / echoed / ignored. |
 | `additional/role_swap.py` | Written. Not run. SecPO only. |
-| `delims` (ours) | Written 2026-11-20, not run. Loads a `delims_step<N>.pt` from `train/train_delims.py`, uses the `make_data.py` template, writes the trained vectors into the reserved-token embedding rows (unties lm_head first on tied models like 3.2-1B). Prompt building checked offline, the model was not. |
-| `attacks/run_attacks.py` | Written 2026-11-20, not run on a model. Attacks, data download (208 AlpacaFarm samples) and attack selection checked offline. |
+| `delims` (ours) | Loads a `delims_step<N>.pt` from `train/train_delims.py`, uses the `make_data.py` template, writes the trained vectors into the reserved-token embedding rows (unties lm_head first on tied models like 3.2-1B). Strips the 8 Llama-3 control tokens and our delimiter tokens from the data by default; `--no-filter` turns this off. Run in 4-bit on all 208 AlpacaFarm samples and 500 SEP rows (2026-11-23, see `results/README.md`). |
+| `attacks/run_attacks.py` | Run on all five defenses in 4-bit on an RTX 5070 Ti laptop (2026-11-21 to 11-23). Results and the summary script: `results/README.md`, `attacks/summarize_results.py`. |
 
 ## Install
 

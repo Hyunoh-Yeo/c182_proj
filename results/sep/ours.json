@@ -1,0 +1,16 @@
+{
+  "name": "delims",
+  "model": null,
+  "checkpoint": "checkpoints/insert_n2_lr0.1_ga16/delims_step1163.pt",
+  "embeddings": null,
+  "no_delims": false,
+  "no_filter": false,
+  "four_bit": true,
+  "sample": 500,
+  "seed": 42,
+  "limit": null,
+  "max_new_tokens": 256,
+  "mode": "attacked",
+  "rows": 500,
+  "asr": 0.03
+}
