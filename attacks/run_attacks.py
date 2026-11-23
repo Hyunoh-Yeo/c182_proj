@@ -84,9 +84,12 @@ def load_defense(a, ap):
         kw["embeddings_path"] = a.embeddings
     if a.name == "delims":
         kw["use_delims"] = not a.no_delims
+    elif a.no_delims:
+        ap.error("--no-delims only applies to delims")
+    if a.name in ("delims", "undefended"):
         kw["filter_data"] = not a.no_filter
-    elif a.no_delims or a.no_filter:
-        ap.error("--no-delims and --no-filter only apply to delims")
+    elif a.no_filter:
+        ap.error("--no-filter only applies to delims and undefended")
     return load(a.name, **kw)
 
 
@@ -165,7 +168,7 @@ def main():
     n_att = sum(1 for k in runs if k != "clean")
     summary = {
         "defense": tag, "checkpoint": a.checkpoint or a.embeddings, "model": a.model, "four_bit": a.four_bit,
-        "filter_data": (not a.no_filter) if a.name == "delims" else None,
+        "filter_data": (not a.no_filter) if a.name in ("delims", "undefended") else None,
         "data": a.data, "n_samples": len(samples), "max_new_tokens": a.max_new_tokens, "seed": a.seed,
         "per_attack": {k: {"asr": v["asr"] / v["n"], "contains_target": v["contains"] / v["n"], "n": v["n"]}
                        for k, v in stats.items()},

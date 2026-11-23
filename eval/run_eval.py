@@ -39,7 +39,7 @@ RESULTS_DIR = ROOT / "eval" / "results"
 def load_sep(path: Path = SEP_PATH, limit: int | None = None, sample: int | None = None,
              seed: int = 0) -> list[tuple[int, dict]]:
     """Returns (original SEP index, row) pairs. `sample` draws a seeded random subset."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         rows = list(enumerate(json.load(f)))
     if sample is not None:
         rows = [rows[i] for i in sorted(random.Random(seed).sample(range(len(rows)), sample))]
@@ -73,7 +73,7 @@ def run_eval(
                 "idx": i,
                 "witness": witness,
                 "hit": hit,
-                "output": output[:500],  # truncate for CSV sanity
+                "output": output,
             }
         )
         running_asr = attack_success_rate([r["hit"] for r in results])
@@ -85,7 +85,7 @@ def save_results(results: list[dict], baseline_name: str, mode: str) -> Path:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = RESULTS_DIR / f"{baseline_name}_{mode}_{ts}.csv"
-    with open(out_path, "w", newline="") as f:
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["idx", "witness", "hit", "output"])
         writer.writeheader()
         writer.writerows(results)
@@ -125,9 +125,12 @@ def main():
         kw["embeddings_path"] = args.embeddings
     if args.name == "delims":
         kw["use_delims"] = not args.no_delims
+    elif args.no_delims:
+        ap.error("--no-delims only applies to delims")
+    if args.name in ("delims", "undefended"):
         kw["filter_data"] = not args.no_filter
-    elif args.no_delims or args.no_filter:
-        ap.error("--no-delims and --no-filter only apply to delims")
+    elif args.no_filter:
+        ap.error("--no-filter only applies to delims and undefended")
     tag = args.name + ("_nodelims" if args.no_delims else "") + ("_nofilter" if args.no_filter else "")
 
     print(f"loading SEP from {SEP_PATH}")
@@ -145,6 +148,8 @@ def main():
     )
     asr = attack_success_rate([r["hit"] for r in results])
     out_path = save_results(results, tag, args.mode)
+    with open(out_path.with_suffix(".json"), "w", encoding="utf-8") as f:
+        json.dump({**vars(args), "rows": len(rows), "asr": asr}, f, indent=2)
 
     print(f"\n{'=' * 50}")
     print(f"baseline:      {tag}")
