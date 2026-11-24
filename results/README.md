@@ -53,6 +53,15 @@ witnesses are short common words ("cat", "pen", "root"), so this also fires on "
 (`eval/summarize_sep.py`). Even then, 2 of our 3 remaining hits only mention the word in passing ("South
 America", "black hole"); one ("Christopher Columbus") answers the probe.
 
+## Hyperparameter sweep
+
+`sweep/<run>/log.jsonl` and `config.json` from `train/sweep.py`: 2,000 training rows, 100 validation pairs,
+N(0, I) init, one pass. Learning rate in {0.01, 0.1, 1} at effective batch 16, then batch in {16, 32, 64} at
+lr 0.1 (the batch-64 run was stopped after 10 of its 31 steps, at 640 samples). Final validation SecPO loss:
+lr 0.01 1.467, lr 0.1 0.244, lr 1 6.291 (diverged, delimiter norm 378); batch 32 0.904. At 640 samples:
+batch 16 1.253, batch 32 1.545, batch 64 2.447. Figure: `python paper/make_sweep_figure.py`
+(`paper/figures/sweep.pdf`).
+
 ## Reproduce
 
 Tables (no GPU needed):
