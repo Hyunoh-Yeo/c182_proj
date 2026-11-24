@@ -258,7 +258,7 @@ effective batch 16).
   \label{tab:hparams}
   \centering
   \small
-  \begin{tabular}{p{2.8cm}p{3.9cm}p{5.7cm}}
+  \begin{tabular}{p{3.2cm}p{4.3cm}p{4.9cm}}
     \toprule
     Setting & Value & Source / reason \\
     \midrule
@@ -288,9 +288,9 @@ them. \inprogress{sweep results to be added to Appendix~\ref{app:sweep}}
 with bf16 compute and greedy decoding, with a 128 new-token limit on AlpacaFarm and 256 on SEP. We run the
 same model on the same GPU for every defense so nothing except the defense itself changes between runs.
 Before templating, the undefended model, the no-delimiter ablation and ours remove the eight named Llama-3
-control tokens from the untrusted data, repeating until none remain; this is the filter in SecPO's released
-chat template, so these four runs see identical data. Ours additionally removes its own two delimiter
-tokens. DefensiveToken keeps its released filter (\S\ref{sec:controls}).
+control tokens from the untrusted data, repeating until none remain. This is the filter in SecPO's released
+chat template, so these three runs and SecPO see the same data. Ours additionally removes its own two
+delimiter tokens, which only changes the \emph{delim\_escape} attack. DefensiveToken keeps its released filter (\S\ref{sec:controls}).
 \begin{itemize}
   \item \textbf{Undefended}: the stock chat template, with the instruction and data both placed in the user turn.
   \item \textbf{No delimiters}: our template from Eq.~\ref{eq:prompt} but with $d_1$ and $d_2$ dropped. This is
@@ -340,7 +340,7 @@ short common words (``cat'', ``pen'', ``root''), that also fires on words like `
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=0.85\linewidth]{figures/asr.pdf}
+  \includegraphics[width=\linewidth]{figures/asr.pdf}
   \caption{Attack success rate, lower is better. \textbf{Left}: share of the 208 AlpacaFarm samples broken
   by at least one of 10 attacks. \textbf{Right}: share of 500 SEP probes whose witness word appears in the
   output. Error bars: 95\% Wilson intervals over samples (single training seed). Linear scales, since the
@@ -411,7 +411,7 @@ delimiters remain untested (\S\ref{sec:discussion}).
   values are clipped at $10^{-6}$. The dotted line is $\log 2$, the loss when the policy and reference
   margins are equal. \textbf{Bottom}: share of validation pairs where the policy margin is still below the
   reference margin (blue) and the AlpacaFarm attack success rate of saved checkpoints with 95\% Wilson
-  intervals (orange).}
+  intervals (orange), all evaluated with the data filter off (\S\ref{sec:controls}).}
   \label{fig:training}
 \end{figure}
 
@@ -550,7 +550,7 @@ Below, \texttt{H(}$r$\texttt{)} abbreviates \texttt{<|start\_header\_id|>}$r$\te
 \texttt{EOT} is \texttt{<|eot\_id|>}, \texttt{\textbackslash n} is a newline, and \texttt{\{I\}}, \texttt{\{D\}}
 are the instruction and the data.
 
-\begin{itemize}
+\begin{itemize}\raggedright
   \item \textbf{Undefended} (Llama-3.1 default template; it always inserts a system turn with its
   knowledge-cutoff and date lines; the same eight control tokens as SecPO are removed from \texttt{\{D\}}):\\
   \texttt{BOS H(system)\textbackslash n\textbackslash n Cutting Knowledge Date: December 2023\textbackslash n Today Date: 26 Jul 2024\textbackslash n\textbackslash n EOT}\\

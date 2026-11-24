@@ -41,7 +41,7 @@ TAB = ROOT / "paper" / "tables"
 # (key, label in the paper). Order = order in every figure and table.
 DEFENSES = [
     ("undefended", "Undefended"),
-    ("no-delims", "Input-role template, no delimiters"),
+    ("no-delims", "No delimiters"),
     ("defensivetoken", "DefensiveToken (5 vectors)"),
     ("secpo", "SecPO (LoRA fine-tune)"),
     ("ours_s1163", "Ours (2 vectors, final)"),
@@ -145,19 +145,19 @@ def fig_method():
 def fig_asr(R, S):
     """Left: AlpacaFarm, any of 10 attacks. Right: SEP, witness as a whole word. Both with Wilson CIs."""
     panels = [
-        ([(label, *asr_any(R[k]), k) for k, label in DEFENSES], 150, [0, 25, 50, 75, 100],
+        ([(label, *asr_any(R[k]), k) for k, label in DEFENSES], 175, [0, 25, 50, 75, 100],
          "AlpacaFarm: any of 10 attacks (%)"),
         ([(label, *sep_rate(S[k]), k) for k, label in DEFENSES], 70, [0, 15, 30, 45],
          "SEP: witness in output (%)"),
     ]
-    fig, axes = plt.subplots(1, 2, figsize=(6.8, 1.9), sharey=True, gridspec_kw={"wspace": 0.1})
+    fig, axes = plt.subplots(1, 2, figsize=(5.5, 2.0), sharey=True, gridspec_kw={"wspace": 0.16})
     for ax, (rows, xmax, ticks, xlabel) in zip(axes, panels):
         for y, (label, k, n, p, lo, hi, key) in enumerate(reversed(rows)):
             c = BLUE if key.startswith("ours") else GRAY
             ax.barh(y, 100 * p, height=0.6, color=c)
             ax.errorbar(100 * p, y, xerr=[[100 * (p - lo)], [100 * (hi - p)]], fmt="none",
                         ecolor=INK, elinewidth=0.9, capsize=2.5)
-            ax.text(100 * hi + xmax * 0.015, y, f"{100 * p:.1f}%  ({k}/{n})", va="center", fontsize=7.5,
+            ax.text(100 * hi + xmax * 0.02, y, f"{100 * p:.1f}% ({k}/{n})", va="center", fontsize=7.5,
                     color=INK)
         ax.set_yticks(range(len(rows)), [r[0] for r in reversed(rows)])
         ax.set_xlim(0, xmax)
@@ -287,9 +287,9 @@ def tab_filter(R):
     def per(by, a):
         outs = by[a]
         return f"{100 * sum(attacked(o) for o in outs.values()) / len(outs):.1f}"
-    lines = [r"\begin{tabular}{lcccccc}", r"\toprule",
-             r" & \multicolumn{2}{c}{Any of 10 attacks} & \multicolumn{2}{c}{\texttt{completion\_chat}}"
-             r" & \multicolumn{2}{c}{\texttt{completion\_chat\_ignore}} \\",
+    lines = [r"\setlength{\tabcolsep}{4.5pt}", r"\begin{tabular}{lcccccc}", r"\toprule",
+             r" & \multicolumn{2}{c}{Any of 10 attacks} & \multicolumn{2}{c}{\emph{completion\_chat}}"
+             r" & \multicolumn{2}{c}{\emph{completion\_chat\_ignore}} \\",
              r"\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}",
              r"Defense & off & on & off & on & off & on \\", r"\midrule"]
     for k, label in FILTER_ROWS:
