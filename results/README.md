@@ -30,8 +30,9 @@ The static attacks contain no control tokens, so their numbers are identical wit
 Even with the filter, the plain-text words left behind ("assistant", "user") still work as fake turns for the
 undefended models (completion_chat: 89.9% undefended, 88.5% no-delims).
 
-`attacks/ours_s300.jsonl` and `attacks/ours_s600.jsonl` are still the unfiltered runs (copies of
-`additional/nofilter/`), kept so that `paper/make_figures.py` runs. They are not in the table above.
+Earlier checkpoints, same setting (`attacks/ours_s300.jsonl`, `attacks/ours_s600.jsonl`): step 300 is broken on
+0.5% (1/208, CI [0.1, 2.7]; one `completion_chat_ignore` sample), step 600 on 0.0% (0/208). Without the filter
+the same checkpoints give 13.5% and 1.9% (`additional/nofilter/`).
 
 ## SEP
 
@@ -57,7 +58,7 @@ America", "black hole"); one ("Christopher Columbus") answers the probe.
 Tables (no GPU needed):
 
 ```
-python attacks/summarize_results.py undefended=results/attacks/undefended.jsonl no-delims=results/attacks/no-delims.jsonl secpo=results/attacks/secpo.jsonl defensivetoken=results/attacks/defensivetoken.jsonl ours_s1163=results/attacks/ours_s1163.jsonl --ref ours_s1163 --out results/asr.csv
+python attacks/summarize_results.py undefended=results/attacks/undefended.jsonl no-delims=results/attacks/no-delims.jsonl secpo=results/attacks/secpo.jsonl defensivetoken=results/attacks/defensivetoken.jsonl ours_s300=results/attacks/ours_s300.jsonl ours_s600=results/attacks/ours_s600.jsonl ours_s1163=results/attacks/ours_s1163.jsonl --ref ours_s1163 --out results/asr.csv
 python eval/summarize_sep.py undefended=results/sep/undefended.csv no-delims=results/sep/no-delims.csv secpo=results/sep/secpo.csv defensivetoken=results/sep/defensivetoken.csv ours=results/sep/ours.csv --ref ours --out results/sep_asr.csv
 ```
 
@@ -79,5 +80,4 @@ python eval/run_eval.py undefended --four-bit --sample 500 --seed 42
 ## Not done yet
 - Utility is not scored (clean outputs are saved but not judged).
 - SEP without probes (`--mode clean`) not run, so the witness rate without an attack is unknown.
-- Steps 300 and 600 not rerun with the filter.
 - One training seed; only template attacks (no optimization attacks such as GCG).

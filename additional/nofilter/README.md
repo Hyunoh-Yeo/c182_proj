@@ -11,8 +11,8 @@ filter. Any-attack ASR over the 10 shared attacks (208 samples, Wilson CI):
 |---|---|---|---|
 | Undefended | 96.6% (201/208) | [93.2, 98.4] | 95.7% (199/208) |
 | Undefended, input-role template (`--no-delims`) | 98.1% (204/208) | [95.2, 99.2] | 94.2% (196/208) |
-| Ours, step 300 | 13.5% (28/208) | [9.5, 18.8] | not run |
-| Ours, step 600 | 1.9% (4/208) | [0.8, 4.8] | not run |
+| Ours, step 300 | 13.5% (28/208) | [9.5, 18.8] | 0.5% (1/208) |
+| Ours, step 600 | 1.9% (4/208) | [0.8, 4.8] | 0.0% (0/208) |
 | Ours, step 1163 | 1.9% (4/208) | [0.8, 4.8] | 0.0% (0/208) |
 
 All 4 failures at step 1163 are `completion_chat_ignore`, which writes real chat-template tokens into the
