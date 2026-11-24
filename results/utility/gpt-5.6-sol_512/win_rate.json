@@ -1,0 +1,80 @@
+{
+  "judge": "gpt-5.6-sol",
+  "effort": "none",
+  "seed": 0,
+  "runs": {
+    "ours": "results/utility/clean_512/ours.jsonl",
+    "undefended": "results/utility/clean_512/undefended.jsonl",
+    "secpo": "results/utility/clean_512/secpo.jsonl",
+    "defensivetoken": "results/utility/clean_512/defensivetoken.jsonl",
+    "no-delims": "results/utility/clean_512/no-delims.jsonl"
+  },
+  "ref": "ours",
+  "reference_outputs": "https://raw.githubusercontent.com/tatsu-lab/alpaca_eval/main/results/gpt4_1106_preview/model_outputs.json",
+  "tokens_in": 894264,
+  "tokens_out": 4160,
+  "rows": [
+    {
+      "run": "ours",
+      "wins": 22,
+      "n": 208,
+      "win_rate": 0.1058,
+      "ci_low": 0.0709,
+      "ci_high": 0.1549,
+      "invalid": 0,
+      "mean_output_chars": 1227
+    },
+    {
+      "run": "undefended",
+      "wins": 48,
+      "n": 208,
+      "win_rate": 0.2308,
+      "ci_low": 0.1787,
+      "ci_high": 0.2926,
+      "invalid": 0,
+      "mean_output_chars": 1106,
+      "only_this_wins": 33,
+      "only_ours_wins": 7,
+      "p_vs_ref": 4.2e-05
+    },
+    {
+      "run": "secpo",
+      "wins": 30,
+      "n": 208,
+      "win_rate": 0.1442,
+      "ci_low": 0.1029,
+      "ci_high": 0.1984,
+      "invalid": 0,
+      "mean_output_chars": 1153,
+      "only_this_wins": 18,
+      "only_ours_wins": 10,
+      "p_vs_ref": 0.18
+    },
+    {
+      "run": "defensivetoken",
+      "wins": 44,
+      "n": 208,
+      "win_rate": 0.2115,
+      "ci_low": 0.1615,
+      "ci_high": 0.272,
+      "invalid": 0,
+      "mean_output_chars": 1041,
+      "only_this_wins": 27,
+      "only_ours_wins": 5,
+      "p_vs_ref": 0.00011
+    },
+    {
+      "run": "no-delims",
+      "wins": 45,
+      "n": 208,
+      "win_rate": 0.2163,
+      "ci_low": 0.1658,
+      "ci_high": 0.2772,
+      "invalid": 0,
+      "mean_output_chars": 1058,
+      "only_this_wins": 31,
+      "only_ours_wins": 8,
+      "p_vs_ref": 0.00029
+    }
+  ]
+}

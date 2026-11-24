@@ -1,0 +1,19 @@
+{
+  "defense": "secpo",
+  "checkpoint": "Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO",
+  "model": null,
+  "four_bit": true,
+  "filter_data": null,
+  "data": "alpaca",
+  "n_samples": 208,
+  "max_new_tokens": 512,
+  "seed": 42,
+  "per_attack": {
+    "clean": {
+      "asr": 0.0,
+      "contains_target": 0.0,
+      "n": 208
+    }
+  },
+  "any_attack_asr": null
+}

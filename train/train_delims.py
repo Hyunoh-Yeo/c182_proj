@@ -13,8 +13,8 @@ the undefended model, so it is computed on the fly under no_grad.
 
 Usage (Mac, debug):
   python train/train_delims.py --model unsloth/Llama-3.2-1B-Instruct --max_steps 20 --log_every 1
-Usage (Windows, 8B):
-  python train/train_delims.py --model meta-llama/Llama-3.1-8B-Instruct --load_in_4bit
+Usage (Windows, 8B, the settings of the reported run; several differ from the defaults below):
+  python train/train_delims.py --model meta-llama/Llama-3.1-8B-Instruct --load_in_4bit --n 2 --lr 0.1 --grad_accum 16 --init std_normal --seed 42 --out "outputs/final_n2_lr{lr}_ga{ga}_{init}"
 """
 
 import argparse

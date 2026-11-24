@@ -10,3 +10,4 @@ numpy
 tqdm
 matplotlib
 bitsandbytes; platform_system != "Darwin"
+openai>=1.58  # eval/utility_judge.py only (LLM judge for utility)

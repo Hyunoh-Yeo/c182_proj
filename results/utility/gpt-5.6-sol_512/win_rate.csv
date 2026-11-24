@@ -1,0 +1,6 @@
+run,wins,n,win_rate,ci_low,ci_high,invalid,mean_output_chars,only_this_wins,only_ours_wins,p_vs_ref
+ours,22,208,0.1058,0.0709,0.1549,0,1227,,,
+undefended,48,208,0.2308,0.1787,0.2926,0,1106,33,7,4.2e-05
+secpo,30,208,0.1442,0.1029,0.1984,0,1153,18,10,0.18
+defensivetoken,44,208,0.2115,0.1615,0.272,0,1041,27,5,0.00011
+no-delims,45,208,0.2163,0.1658,0.2772,0,1058,31,8,0.00029

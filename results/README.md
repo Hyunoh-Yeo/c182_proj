@@ -53,6 +53,33 @@ witnesses are short common words ("cat", "pen", "root"), so this also fires on "
 (`eval/summarize_sep.py`). Even then, 2 of our 3 remaining hits only mention the word in passing ("South
 America", "black hole"); one ("Christopher Columbus") answers the probe.
 
+## Utility
+
+Clean outputs (no injection) on the same 208 AlpacaFarm samples, regenerated with `--attacks none
+--max-new-tokens 512` (the 128-token outputs above cut off about two thirds of the answers; with greedy decoding
+the 128-token outputs are exact prefixes of the new ones for all 1,040 samples). Raw outputs:
+`utility/clean_512/*.jsonl`. Each output is judged against GPT-4 Turbo's (`gpt-4-1106-preview`) output for the
+same instruction with AlpacaEval 2.0's judge prompt, by `gpt-5.6-sol` (AlpacaEval 2.0's own judge has been shut
+down), binary answers, output order randomized per sample and the same for every defense. Judgments:
+`utility/gpt-5.6-sol_512/annotations.jsonl`; table: `utility/gpt-5.6-sol_512/win_rate.csv`.
+
+| Defense | Wins / 208 | Win rate | 95% CI | p vs ours | Mean length (chars) |
+|---|---|---|---|---|---|
+| Undefended | 48 | 23.1% | [17.9, 29.3] | <0.0001 | 1,106 |
+| Undefended, input-role template (`--no-delims`) | 45 | 21.6% | [16.6, 27.7] | 0.0003 | 1,058 |
+| DefensiveToken | 44 | 21.2% | [16.2, 27.2] | 0.0001 | 1,041 |
+| SecPO | 30 | 14.4% | [10.3, 19.8] | 0.18 | 1,153 |
+| **Ours (step 1163)** | 22 | **10.6%** | [7.1, 15.5] | - | 1,227 |
+
+p = exact two-sided sign test on the samples where exactly one of the two defenses beats the reference. Against
+the undefended model: SecPO p = 0.003, DefensiveToken 0.62, no-delims 0.72. GPT-4 Turbo's outputs average 1,291
+characters. On the 154 samples where neither ours nor no-delims looks cut off (no sentence-final punctuation),
+the win rates are 10.4% and 23.4%, so truncation does not explain the gap. The judge prefers the second position
+(model wins 14.8% when shown first, 22.1% when second); the order is the same for every defense, so this does
+not favor any of them. These numbers compare the five defenses with each other; they are not AlpacaEval 2.0
+numbers (different judge, binary, no length control, 208 of 805 instructions). Cost: 894k input tokens, about
+US$4.6 at list price.
+
 ## Hyperparameter sweep
 
 `sweep/<run>/log.jsonl` and `config.json` from `train/sweep.py`: 2,000 training rows, 100 validation pairs,
@@ -69,7 +96,10 @@ Tables (no GPU needed):
 ```
 python attacks/summarize_results.py undefended=results/attacks/undefended.jsonl no-delims=results/attacks/no-delims.jsonl secpo=results/attacks/secpo.jsonl defensivetoken=results/attacks/defensivetoken.jsonl ours_s300=results/attacks/ours_s300.jsonl ours_s600=results/attacks/ours_s600.jsonl ours_s1163=results/attacks/ours_s1163.jsonl --ref ours_s1163 --out results/asr.csv
 python eval/summarize_sep.py undefended=results/sep/undefended.csv no-delims=results/sep/no-delims.csv secpo=results/sep/secpo.csv defensivetoken=results/sep/defensivetoken.csv ours=results/sep/ours.csv --ref ours --out results/sep_asr.csv
+python eval/utility_judge.py ours=results/utility/clean_512/ours.jsonl undefended=results/utility/clean_512/undefended.jsonl secpo=results/utility/clean_512/secpo.jsonl defensivetoken=results/utility/clean_512/defensivetoken.jsonl no-delims=results/utility/clean_512/no-delims.jsonl --ref ours --out-dir results/utility/gpt-5.6-sol_512
 ```
+
+The utility command reuses the saved judgments in `annotations.jsonl` (matched by defense name and sample, not by output text), so it needs no API key; to judge new outputs, use a new `--out-dir`.
 
 Outputs (AlpacaFarm about 2.5 h per defense, SEP about 1 h per defense, on a 12 GB GPU):
 
@@ -84,9 +114,11 @@ python eval/run_eval.py delims --checkpoint checkpoints/insert_n2_lr0.1_ga16/del
 python eval/run_eval.py secpo --checkpoint Sizhe-Chen/Llama-3.1-8B-Instruct-SecPO --four-bit --sample 500 --seed 42
 python eval/run_eval.py defensivetoken --embeddings defensivetokens.json --four-bit --sample 500 --seed 42
 python eval/run_eval.py undefended --four-bit --sample 500 --seed 42
+python attacks/run_attacks.py delims --checkpoint checkpoints/insert_n2_lr0.1_ga16/delims_step1163.pt --attacks none --max-new-tokens 512 --four-bit --out outputs/utility
+(the same for --no-delims, secpo, defensivetoken and undefended; 27 to 39 min each)
 ```
 
 ## Not done yet
-- Utility is not scored (clean outputs are saved but not judged).
+- Utility only on the 208 samples with an input, with a substitute judge; not yet on all 805 AlpacaEval instructions.
 - SEP without probes (`--mode clean`) not run, so the witness rate without an attack is unknown.
 - One training seed; only template attacks (no optimization attacks such as GCG).

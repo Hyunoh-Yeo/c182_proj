@@ -124,14 +124,15 @@ class Judge:
         self.model, self.max_tokens, self.mock = model, max_completion_tokens, mock
         self.effort = None if mock else EFFORTS[0]
         self.lock = threading.Lock()
-        if not mock:
-            from openai import OpenAI
-            self.client = OpenAI(max_retries=0)
+        self.client = None  # created on the first API call, so a fully cached rerun needs no API key
 
     def ask(self, prompt):
         if self.mock:
             return random.choice("mM"), {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0}
         import openai
+        with self.lock:
+            if self.client is None:
+                self.client = openai.OpenAI(max_retries=0)
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
         for attempt in range(8):
             used = self.effort
@@ -261,13 +262,14 @@ def main():
             common = set(w) & set(wins[ref_name])
             b = sum(1 for i in common if w[i] and not wins[ref_name][i])
             c = sum(1 for i in common if wins[ref_name][i] and not w[i])
-            row.update({"only_this_wins": b, f"only_{ref_name}_wins": c, "p_vs_ref": round(sign_test(b, c), 4)})
+            row.update({"only_this_wins": b, f"only_{ref_name}_wins": c, "p_vs_ref": float(f"{sign_test(b, c):.2g}")})
         rows.append(row)
 
     print(f"\nwin rate against gpt-4-1106-preview, judge {a.judge}, p = sign test vs {ref_name}")
     for row in rows:
-        p = f"  p={row['p_vs_ref']}" if "p_vs_ref" in row else "  (ref)"
-        print(f"  {row['run']:16s} {row['wins']:3d}/{row['n']:3d} = {100 * row['win_rate']:5.1f}% "
+        p = "  (ref)" if "p_vs_ref" not in row else (
+            "  p<0.0001" if row["p_vs_ref"] < 0.0001 else f"  p={row['p_vs_ref']}")
+        print(f"  {row['run']:16s} {row['wins']:3d}/{row['n']:3d} = {100 * row['wins'] / row['n']:5.1f}% "
               f"[{100 * row['ci_low']:.1f}, {100 * row['ci_high']:.1f}]  {row['mean_output_chars']} chars{p}")
 
     if not a.probe:

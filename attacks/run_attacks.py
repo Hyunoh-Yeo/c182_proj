@@ -94,6 +94,8 @@ def load_defense(a, ap):
 
 
 def pick_attacks(a, d):
+    if a.attacks == "none":  # clean outputs only, e.g. for the utility judge
+        return {}
     names = {"static": STATIC, "adaptive": ADAPTIVE, "all": STATIC + ADAPTIVE}.get(a.attacks)
     names = list(names) if names else a.attacks.split(",")
     attacks = {}
@@ -123,7 +125,7 @@ def main():
     ap.add_argument("--data", default="alpaca", choices=["alpaca", "builtin"])
     ap.add_argument("--limit", type=int, default=-1, help="use only the first N samples")
     ap.add_argument("--attacks", default="static",
-                    help="static | adaptive | all | comma list, e.g. ignore,completion,delim_escape")
+                    help="static | adaptive | all | none (clean only) | comma list, e.g. ignore,completion,delim_escape")
     ap.add_argument("--max-new-tokens", type=int, default=128)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--no-clean", action="store_true", help="skip the clean (no injection) run")
