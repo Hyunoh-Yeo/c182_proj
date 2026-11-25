@@ -8,6 +8,35 @@ AlpacaFarm prompt injections and SEP.
 The paper source is in `paper/` (`paper/main.tex`). The results in it come from files in `results/`,
 `additional/` and `checkpoints/`, and every table and figure can be rebuilt from those files without a GPU.
 
+Status: this is the V1 draft. For the final submission we plan a variant that inserts no new tokens and
+instead trains the template tokens around the data (see the discussion section of the paper).
+
+**Where to start.** Read the results below, then [Setup](#setup) and step 1 of [Reproduce](#reproduce),
+which rebuilds every number in the paper from the saved outputs in about a minute without a GPU. Steps 2 to
+6 rerun the data, training and evaluation from scratch.
+
+## Results
+
+All runs use Llama-3.1-8B-Instruct in 4-bit NF4 with greedy decoding, the same attacks and the same samples
+for every defense, and a single training seed. Brackets are 95% Wilson intervals.
+
+| Defense | Trainable parameters | AlpacaFarm, any of 10 attacks | SEP, whole-word witness | Utility win rate vs GPT-4 Turbo |
+|---|---|---|---|---|
+| Undefended | 0 | 95.7% (199/208) | 42.4% (212/500) | 23.1% [17.9, 29.3] |
+| No delimiters (our template, no vectors) | 0 | 94.2% (196/208) | 28.0% (140/500) | 21.6% [16.6, 27.7] |
+| DefensiveToken (5 vectors) | 20,480 | 9.6% (20/208) | 2.2% (11/500) | 21.2% [16.2, 27.2] |
+| SecPO (LoRA) | about 140M | 0.0% (0/208) | 1.8% (9/500) | 14.4% [10.3, 19.8] |
+| **Ours (2 vectors)** | **8,192** | **0.0% (0/208)** [0, 1.8] | **0.6% (3/500)** [0.2, 1.7] | **10.6%** [7.1, 15.5] |
+
+- On AlpacaFarm, our two vectors match SecPO (both 0/208); DefensiveToken is broken on 9.6% of samples.
+- On SEP, ours is the lowest, but its interval overlaps those of SecPO and DefensiveToken.
+- With the filter that removes chat-template control tokens from the data turned off, ours rises only to
+  1.9% on AlpacaFarm (`additional/nofilter/`), so the robustness comes mainly from the delimiters.
+- The delimiters cost utility on benign inputs: 10.6% against 21.6% for the same prompt without them.
+
+The numbers come from `results/asr.csv`, `results/sep_asr.csv` and
+`results/utility/gpt-5.6-sol_512/win_rate.csv`.
+
 ## Layout
 
 | Path | What it holds |
