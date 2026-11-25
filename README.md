@@ -37,6 +37,32 @@ for every defense, and a single training seed. Brackets are 95% Wilson intervals
 The numbers come from `results/asr.csv`, `results/sep_asr.csv` and
 `results/utility/gpt-5.6-sol_512/win_rate.csv`.
 
+## From the paper to the files
+
+Every number in the paper comes from a file in this repository and can be rebuilt with step 1 of
+[Reproduce](#reproduce) (no GPU). The table says where each result lives and which README explains it.
+
+| In the paper | Rebuilt by | Raw files | Details in |
+|---|---|---|---|
+| Figure 2 (left), Table 2 (App. C): AlpacaFarm ASR, any attack and per attack | `attacks/summarize_results.py`, `paper/make_figures.py` | `results/attacks/` | `results/README.md` |
+| Figure 2 (right), Table 3 (App. C): SEP | `eval/summarize_sep.py`, `paper/make_figures.py` | `results/sep/` | `results/README.md`, `eval/README.md` |
+| Table 1: utility win rates | `eval/utility_judge.py` (reuses the saved judgments) | `results/utility/` | `eval/README.md` |
+| Table 5 (App. D), Section 5.3: data filter off vs on | `attacks/summarize_results.py` | `additional/nofilter/` | `additional/nofilter/README.md` |
+| Figure 3, Section 5.2: training loss and checkpoint ASR | `paper/make_figures.py` | `checkpoints/insert_n2_lr0.1_ga16/log.jsonl`, `additional/nofilter/` | `paper/README.md` |
+| Figure 4, Table 7 (App. H): learning-rate and batch-size sweep | `paper/make_sweep_figure.py` | `results/sweep/` | `paper/README.md` |
+| Figure 5 (App. J): delimiter norms | `paper/make_figures.py` | `checkpoints/insert_n2_lr0.1_ga16/log.jsonl` | `paper/README.md` |
+| Appendix A: prompt templates of every defense | `baselines/` | | `baselines/README.md` |
+
+Which README to open for what:
+
+| README | What it covers |
+|---|---|
+| `results/README.md` | All result tables with counts, 95% Wilson intervals and p-values, and which run produced each file. |
+| `eval/README.md` | SEP and utility evaluation commands, and how our utility judge differs from AlpacaEval 2.0. |
+| `baselines/README.md` | How each of the five defenses is loaded (template, data filter, checkpoint) and the choices we made. |
+| `additional/nofilter/README.md` | The ablation with the data filter turned off, with its numbers and command. |
+| `paper/README.md` | How to rebuild the figures and tables and compile the paper. |
+
 ## Layout
 
 | Path | What it holds |
