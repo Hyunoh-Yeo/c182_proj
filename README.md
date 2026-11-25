@@ -54,7 +54,10 @@ python attacks/summarize_results.py undefended=results/attacks/undefended.jsonl 
 python eval/summarize_sep.py undefended=results/sep/undefended.csv no-delims=results/sep/no-delims.csv secpo=results/sep/secpo.csv defensivetoken=results/sep/defensivetoken.csv ours=results/sep/ours.csv --ref ours --out results/sep_asr.csv
 python paper/make_figures.py
 python paper/make_sweep_figure.py
+python eval/utility_judge.py ours=results/utility/clean_512/ours.jsonl undefended=results/utility/clean_512/undefended.jsonl secpo=results/utility/clean_512/secpo.jsonl defensivetoken=results/utility/clean_512/defensivetoken.jsonl no-delims=results/utility/clean_512/no-delims.jsonl --ref ours --out-dir results/utility/gpt-5.6-sol_512
 ```
+
+The last command rebuilds the utility table from the saved judgments in `results/utility/gpt-5.6-sol_512/annotations.jsonl`, so it needs neither a GPU nor an OpenAI API key. It downloads the AlpacaFarm samples and GPT-4 Turbo's reference outputs on the first run.
 
 **2. Training data (downloads SecPO's training set).**
 

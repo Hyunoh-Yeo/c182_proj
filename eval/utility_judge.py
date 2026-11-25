@@ -39,7 +39,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "attacks"))
 from summarize_results import wilson  # noqa: E402
 
-ALPACA_PATH = ROOT / "data" / "processed" / "davinci_003_outputs.json"  # downloaded by run_attacks.py
+ALPACA_URL = ("https://huggingface.co/datasets/hamishivi/alpaca-farm-davinci-003-2048-token/"
+              "resolve/main/davinci_003_outputs.json")  # the same file attacks/run_attacks.py uses
+ALPACA_PATH = ROOT / "data" / "processed" / "davinci_003_outputs.json"
 REF_URL = ("https://raw.githubusercontent.com/tatsu-lab/alpaca_eval/main/"
            "results/gpt4_1106_preview/model_outputs.json")
 REF_PATH = ROOT / "data" / "processed" / "alpaca_eval_gpt4_1106_preview_outputs.json"
@@ -83,10 +85,11 @@ EFFORTS = ["none", "minimal", "low"]  # tried in this order until the judge mode
 
 def load_samples():
     """The 208 AlpacaFarm samples with an input, each with its AlpacaEval instruction and GPT-4 Turbo output."""
-    if not REF_PATH.exists():
-        REF_PATH.parent.mkdir(parents=True, exist_ok=True)
-        print(f"downloading {REF_URL}")
-        urllib.request.urlretrieve(REF_URL, REF_PATH)
+    for url, path in ((ALPACA_URL, ALPACA_PATH), (REF_URL, REF_PATH)):
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"downloading {url}")
+            urllib.request.urlretrieve(url, path)
     farm = json.load(open(ALPACA_PATH, encoding="utf-8"))
     ref = json.load(open(REF_PATH, encoding="utf-8"))
     assert len(farm) == len(ref) == 805, (len(farm), len(ref))
