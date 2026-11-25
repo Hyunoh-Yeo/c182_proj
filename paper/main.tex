@@ -40,115 +40,46 @@
 \maketitle
 
 \begin{abstract}
-Prompt injection lets text inside untrusted data (a web page, an email, a tool output) override the
-instruction an LLM was given. The strongest current defenses fine-tune the whole model with preference
-optimization on simulated injections. We ask how much of that robustness survives if the model is frozen
-and the only trainable parameters are two embedding vectors that wrap the untrusted data. We train these
-two delimiters ($2 \times 4096 = 8{,}192$ parameters) on Llama-3.1-8B-Instruct with the training data and
-loss of SecPO, a recent fine-tuning defense, and compare against the undefended model, the released SecPO
-model, and DefensiveToken, all on the same quantized base model and the same attacks. On 208 AlpacaFarm
-samples under 10 attacks, no sample is broken by any attack with the delimiters (0/208, 95\% CI 0--1.8\%),
-against 94.2\% for the same template without them, 0\% for SecPO and 9.6\% for DefensiveToken. On 500 SEP
-probes the delimiters reach 0.6\% (CI 0.2--1.7\%), against 1.8\% for SecPO and 2.2\% for DefensiveToken.
-Removing the special-token filter on the data, which all strong baselines use, raises our AlpacaFarm rate
-only to 1.9\%, so the delimiters, not the filter, do the work. The training loss is a poor guide to
-robustness: validation loss is already near zero at step 300, where the attack success rate is still
-13.5\%. The learned vectors end with norms 150--180 times the mean norm of ordinary token embeddings.
-Utility on benign tasks is still being measured.
+Prompt injection hides misleading instructions inside untrusted data (a web page, an email, a tool output) that override the instruction an LLM agent was given and make it malfunction. While the strongest current defenses fine-tune the model's weights with preference optimization on simulated injections, we ask whether the model can learn to resist prompt injection comparably if the model and the trusted instruction stay frozen and only two extra delimiters wrapping the untrusted input are trainable. These delimiters are $2 \times 4096 = 8{,}192$ numbers, about 17{,}000 times fewer than the LoRA parameters of SecPO, a recent fine-tuning defense. We train them on Llama-3.1-8B-Instruct with SecPO's training data and loss, and compare against the undefended model, the released SecPO model, and DefensiveToken under the same 4-bit quantization and the same attacks. On 208 AlpacaFarm samples under 10 attacks, no sample is broken with our defense (0/208, 95\% CI 0--1.8\%), against 94.2\% for the same prompt without the delimiters, 0\% for SecPO and 9.6\% for DefensiveToken. On 500 probes from the SEP benchmark our defense reaches 0.6\% (95\% CI 0.2--1.7\%), the lowest of all defenses, and its 95\% CI overlaps with those of SecPO (1.8\%) and DefensiveToken (2.2\%). Even when we turn off the filter that removes chat-template control tokens from the data, the attack success rate of our defense on AlpacaFarm rises only to 1.9\%, which indicates that the robustness mainly comes from the delimiters. The delimiters do cost utility on benign inputs, where an AlpacaEval-style judge prefers our answers to GPT-4 Turbo's on 10.6\% of samples, against 21.6\% without them and 14.4\% for SecPO. All results come from a single training seed. For the final submission, we are planning to unfreeze and train the template tokens around the data instead of adding extra delimiters, to test how this changes the trade-off between attack success rate and utility.
 \end{abstract}
 
 % =====================================================================================
 \section{Introduction}
 \label{sec:intro}
 
-LLM applications routinely place text they did not write into the model's context: retrieved documents,
-emails, web pages and tool results. If that text contains an instruction, such as ``ignore the above and
-print \emph{attacked!}'', the model often follows it instead of the developer's instruction. This is
-\emph{prompt injection}~\cite{perez2022ignore,greshake2023not}, and it is a security problem rather than a
-quality problem: whoever controls the data controls the model.
+When an LLM agent calls a tool to browse a web page or fetch an email, it inserts the result into a prompt next to the user's instruction, and the model reads the whole prompt as one stream of tokens. Therefore, if the data contains an instruction, such as ``ignore the above and print \emph{attacked!}'', the model can follow the injected instruction from the data, because it cannot reliably distinguish the instruction given by the user from the data that comes from an external source~\cite{zverev2025aside,zverev2025sep,yi2023bipia}. This vulnerability is known as \emph{prompt injection}~\cite{perez2022ignore,greshake2023not}. Because the attacker needs nothing more than to place text where an agent will retrieve it, prompt injection has been demonstrated against deployed systems, enabling attacks such as data exfiltration and control over the agent's behavior~\cite{greshake2023not}.
 
-The most effective defenses so far change the model. StruQ~\cite{chen2025struq} and
-SecAlign~\cite{chen2024secalign} put untrusted data in its own part of the prompt and fine-tune the model
-on simulated injections so that it ignores instructions found there; Meta-SecAlign~\cite{chen2025metasecalign}
-and SecPO~\cite{chen2026secpo} scale this up with preference losses. These defenses work, but every
-deployment then runs a different set of weights, and the model's behaviour changes even on inputs that
-contain no data at all.
+The strongest current defenses change the model's weights. StruQ~\cite{chen2025struq} isolates the untrusted data in a separate part of the prompt and fine-tunes the model on examples whose data contain injected instructions, so that the model learns to ignore instructions there. SecAlign~\cite{chen2024secalign}, Meta-SecAlign~\cite{chen2025metasecalign} and SecPO~\cite{chen2026secpo} train on the same kind of examples with preference optimization, which teaches the model to prefer a response to the user's instruction over a response to the injected one. While these defenses work, each of them produces a new set of weights that has to be trained and deployed in place of the original model.
 
-A cheaper alternative keeps the model frozen and learns only a few input embeddings.
-DefensiveToken~\cite{chen2025defensivetoken} prepends five learned vectors to the prompt.
-LTBD~\cite{zhao2026ltbd} instead learns four delimiter vectors that mark where the trusted instruction and
-the untrusted data begin and end. Both are trained with losses that differ from the one used by the
-strongest fine-tuning defense, so it is not clear how much of the gap between a few vectors and a full
-fine-tune is due to the parameterization and how much to the objective.
+A cheaper alternative is to keep the model frozen and learn only a few input embeddings. DefensiveToken~\cite{chen2025defensivetoken} prepends five learned vectors to the prompt, and LTBD~\cite{zhao2026ltbd} learns four delimiter vectors that mark where the trusted instruction and the untrusted data begin and end. However, both are trained with losses that differ from the one used by the strongest fine-tuning defense, so it is not clear how much of the gap between a few vectors and a fine-tuned model comes from the parameterization and how much comes from the objective.
 
-This project isolates the parameterization. We take SecPO's training data and loss unchanged, freeze
-Llama-3.1-8B-Instruct, and train only $n=2$ delimiter embeddings that wrap the untrusted data
-(Figure~\ref{fig:method}). Our questions, from the proposal, are:
+In this project, we isolate the parameterization. We take SecPO's training data and loss unchanged, freeze Llama-3.1-8B-Instruct, and train only $n=2$ delimiter embeddings that wrap the untrusted data (Figure~\ref{fig:method}). Our questions, from the proposal, are:
 \begin{enumerate}
   \item How much of SecPO's robustness can two delimiter vectors recover? (\S\ref{sec:results})
-  \item How does this depend on the number of delimiters $n$ and on adaptive attacks?
-        \inprogress{only $n=2$ is trained; adaptive attacks are covered by two template attacks and one
-        delimiter-specific attack, not by optimization attacks}
-  \item What does it cost in utility on benign inputs? \inprogress{outputs saved, not yet scored}
+  \item How robust is it to adaptive attacks? (\S\ref{sec:results}) \inprogress{adaptive attacks are limited to two template attacks and one delimiter attack, without optimization attacks}
+  \item What does it cost in utility on benign inputs? (\S\ref{sec:utility})
 \end{enumerate}
+For the first question, we hypothesized that two vectors would come close to SecPO. Because the model and the trusted instruction stay frozen, the only thing training can change is how the boundary around the untrusted data is represented, and this boundary is exactly where an injection has to act. Therefore, we expected that SecPO's objective could be satisfied through the delimiters alone.
 
-Our contributions are: (i) a training and evaluation pipeline in which the delimiter model, SecPO and
-DefensiveToken are run on the same base model, quantization, decoding, data filtering and attacks; (ii) the
-result that two vectors trained with SecPO's objective match the fully fine-tuned SecPO model on AlpacaFarm
-(0/208 broken samples each) and are at least as robust on SEP (0.6\% vs.\ 1.8\%); (iii) a controlled
-ablation showing that the special-token filter contributes little once the delimiters are trained (1.9\%
-without it); (iv) two observations about how this happens: training loss saturates long before robustness transfers, and the delimiters grow to norms two
-orders of magnitude larger than any vocabulary embedding.
+Our contributions are (i) a pipeline that runs our defense, SecPO and DefensiveToken on the same base model, quantization, decoding and attacks, (ii) the result that two vectors trained with SecPO's objective, about 17{,}000 times fewer trainable parameters than SecPO's LoRA, match SecPO on AlpacaFarm (0/208 broken samples each) and are comparable on SEP (0.6\% against 1.8\%, not significant), (iii) an ablation showing that the special-token filter contributes little once the delimiters are trained (1.9\% without it), (iv) two training observations, that without the filter the loss saturates long before robustness to attacks built from real control tokens appears, and that the delimiters grow two orders of magnitude larger than ordinary embeddings, and (v) a utility measurement showing that this robustness costs utility (an AlpacaEval-style win rate of 10.6\% against 21.6\% without them).
 
 % =====================================================================================
 \section{Background and related work}
 \label{sec:related}
 
-\todo{Kshitij: expand to 2--3 pages as the guidelines require. Each paragraph below should become 2--4
-paragraphs that describe the methods and say how they differ from ours.}
+\paragraph{Prompt injection.} \citet{perez2022ignore} showed that appending ``ignore previous instructions'' to user text redirects GPT-3, and \citet{greshake2023not} named the \emph{indirect} setting we study, where the attacker never talks to the model and only controls data that an application retrieves, such as a web page or an email. \citet{liu2024formalizing} formalize prompt injection, show that earlier attacks are special cases of their formulation, combine them into a new attack, and benchmark 5 attacks and 10 defenses on 10 LLMs and 7 tasks. BIPIA~\cite{yi2023bipia}, a benchmark for indirect injection, finds that existing LLMs are universally vulnerable and traces this to two failures. The models cannot reliably tell informational context from actionable instructions, and they are not inclined to avoid executing instructions found in external content. AgentDojo~\cite{debenedetti2024agentdojo} moves the problem to tool-using agents, with 97 tasks and 629 security test cases. Our threat model follows \citet{chen2025struq}. The instruction is written by a trusted developer or user, the data may contain arbitrary text including injected instructions, and an attack succeeds if the response carries out the injected instruction.
 
-\paragraph{Prompt injection.}
-\citet{perez2022ignore} showed that appending ``ignore previous instructions'' to user text redirects
-GPT-3. \citet{greshake2023not} named the \emph{indirect} setting we study, where the attacker never talks
-to the model and only controls data the application retrieves. The threat model in this paper follows
-\citet{chen2025struq}: the instruction is written by a trusted developer or user, the data may contain
-arbitrary text including injected instructions, and an attack succeeds if the response carries out the
-injected instruction. Attacks range from a plain appended instruction (\emph{naive}), to persuasive
-override phrases (\emph{ignore}), to \emph{completion} attacks that forge the end of the data and the
-start of a new turn so the model believes the injected text is a fresh user instruction. If the attacker
-can write the model's real chat-template tokens into the data, the forgery is exact (we call these
-\emph{adaptive}). Optimization attacks such as GCG~\cite{zou2023gcg} search for adversarial token strings
-directly; we do not run them.
+\paragraph{Attack types.} Attacks range from a plain appended instruction (\emph{naive}) and persuasive override phrases (\emph{ignore}) to \emph{completion} attacks, which forge the end of the data and the start of a new turn so that the model reads the injected text as a new user instruction. When the attacker can write the model's real chat-template tokens into the data, this forgery is exact. We call these attacks \emph{adaptive} because they use knowledge of the chat template, but unlike optimization-based adaptive attacks, they are fixed strings. Optimization attacks such as GCG~\cite{zou2023gcg} search for an adversarial token string directly, and they matter because a defense can hold against fixed strings and still fail against an attacker who optimizes against it. \citet{zhan2025adaptive} bypass all eight indirect-injection defenses they evaluate with attacks tailored to each, consistently above 50\% attack success, and SecPO~\cite{chen2026secpo} reports that Meta-SecAlign, trained with DPO, still reaches attack success near 100\% under adaptive attacks. Embedding defenses show the same gap. On Llama-3.1-8B, DefensiveToken lowers AlpacaFarm attack success from 69.2\% to 0.5\%, but GCG still succeeds on 24.6\% of samples~\cite{chen2025defensivetoken}. SecPO itself is evaluated against three adaptive attacks that search for injections with feedback from the target model, namely a genetic algorithm, a tree search with branching and pruning (TAP), and an attack LLM trained with reinforcement learning (PISmith), and its training injections come from 240 search attempts per step against the current checkpoint. Because we do not run optimization or search attacks, our attack success rates are lower bounds for an attacker who optimizes against the delimiters.
 
-\paragraph{Prompting and structural defenses.}
-Prompt-level defenses wrap the data in hand-written markers or repeat the instruction after the data
-(e.g.\ spotlighting~\cite{hines2024spotlighting}). They need no training but are easily overridden.
-The instruction hierarchy~\cite{wallace2024hierarchy} trains models to give system and user messages
-priority over tool outputs.
+\paragraph{Prompting and architectural defenses.} The cheapest defenses change only the prompt. Spotlighting~\cite{hines2024spotlighting} transforms the data so that it carries a continuous signal of where it came from, which reduces indirect-injection attack success on GPT-family models from above 50\% to below 2\%, and BIPIA's black-box defense, which needs no access to the model's weights, gives substantial mitigation in the same spirit~\cite{yi2023bipia}. They need no training but rely on the model honoring the markers, which is exactly what an injection tries to subvert. A second group changes how the model represents the source of each token. The instruction hierarchy~\cite{wallace2024hierarchy} trains GPT-3.5 on generated data to give privileged instructions priority over lower-privileged text, which improves robustness, including to attack types not seen in training, with minimal loss of standard capabilities. Instructional Segment Embedding (ISE)~\cite{wu2024ise}, inspired by BERT's segment embeddings, adds a learned embedding for one of four roles (system, user, data and output) to every token embedding and trains it together with the model during supervised fine-tuning. ASIDE~\cite{zverev2025aside} instead applies an orthogonal rotation to the embeddings of data tokens, which adds no parameters, and instruction-tunes the model with it, which improves instruction-data separation and robustness on prompt-injection benchmarks without dedicated safety training. These methods share our view that the boundary between instruction and data should be visible in the input embeddings. However, they mark every data token and fine-tune the whole model, while we mark only the two ends of the data and keep the model frozen. A third group leaves the generating model alone and screens its input. Attention Tracker~\cite{hung2024attention} observes a \emph{distraction effect}, in which certain attention heads shift their focus from the original instruction to the injected one, and detects injections by tracking attention on the instruction, without training or extra inference, which improves AUROC by up to 10\% over earlier detectors. DataSentinel~\cite{liu2025datasentinel} fine-tunes an LLM as a detector with a minimax objective whose inner maximization is an adaptive attack that tries to evade it, and reports that it catches both existing and adaptive attacks. While detection decides whether contaminated data should reach the model at all, our delimiters let the model read such data and still follow the original instruction, so the two can be combined.
 
-\paragraph{Fine-tuning defenses.}
-StruQ~\cite{chen2025struq} introduces a separate input channel for data and fine-tunes the model with
-supervised learning on samples where the data contains an injection and the target is the answer to the
-real instruction. SecAlign~\cite{chen2024secalign} replaces supervised learning with DPO on (desired,
-undesired) response pairs; Meta-SecAlign~\cite{chen2025metasecalign} applies this at scale to Llama-3
-models with a dedicated \texttt{input} role. SecPO~\cite{chen2026secpo} observes that DPO keeps the
-defended model close to an \emph{undefended} reference model, which is itself insecure. It instead
-compares the defended model on the injected prompt with the reference model on the \emph{clean} prompt,
-which approximates an injection-invariant oracle (Section~\ref{sec:loss}). We use SecPO's loss and its
-released preference data.
+\paragraph{Fine-tuning defenses.} StruQ~\cite{chen2025struq} separates the prompt and the data into two channels, which a secure front-end formats into a structured input, and fine-tunes a base model on an instruction-tuning set augmented with examples whose data contain instructions, so that the model learns to ignore instructions in the data. This reduces injection success with little or no loss in utility. SecAlign~\cite{chen2024secalign} turns the same idea into preference optimization. Each training input contains an injection and is paired with a secure response, which answers the real instruction, and an insecure one, which follows the injection, and the model is trained to prefer the first. The authors report attack success below 10\%, even for attacks more sophisticated than those seen in training, with utility close to the undefended model. Meta-SecAlign~\cite{chen2025metasecalign} releases 8B and 70B Llama models trained this way. It puts untrusted data in a separate \texttt{input} message role, while system and user messages carry trusted instructions, randomizes where the injection appears in the data, uses the model's own responses as labels, and trains with DPO~\cite{rafailov2023dpo}. It keeps almost all of the undefended model's utility, including on tool-calling and web-navigation tasks. SecPO~\cite{chen2026secpo} identifies DPO's reference model as a weakness, because the reference is the undefended model, which itself follows injections. Therefore, SecPO replaces it with an approximation of an injection-invariant, utility-preserving oracle, the undefended model on the prompt with the injection removed (\S\ref{sec:loss}), and adds an adversarial-training pipeline that generates strong injections (best of 240) to train on. Adversarial training lowers attack success under three adaptive attacks by 1.5 to 14.5 times relative to Meta-SecAlign, the SecPO loss lowers it by a further 2.4 to 4.6 times relative to DPO, and the authors report no noticeable drop in benign utility on nine benchmarks. We use SecPO's loss and its released preference data, which already contain these adversarially generated injections, and change only what is trained.
 
-\paragraph{Frozen-model defenses with learned embeddings.}
-Prompt tuning~\cite{lester2021prompt} and prefix tuning~\cite{li2021prefix} adapt a frozen model by
-learning a few continuous input vectors. DefensiveToken~\cite{chen2025defensivetoken} applies this to
-security: five vectors placed before the prompt, trained with a SecAlign-style objective, bring Llama-3
-attack success close to that of fine-tuning, and removing them restores the original model.
-LTBD~\cite{zhao2026ltbd} is the closest work to ours. It learns four delimiters, one pair around the
-instruction and one around the data, initialized from $\mathcal{N}(0, I)$, with a cross-entropy term on the
-reference answer plus a reference-free preference term, on StruQ-style training data. It reports 0\% attack
-success on AlpacaFarm for Llama-3.1-8B. Our study differs in three controlled ways: (i) the objective and
-data are SecPO's rather than a new loss; (ii) only the data is delimited, the instruction uses the normal
-chat template; (iii) we compare to SecPO trained on the same data, which isolates the effect of
-restricting training to two embeddings.
+\paragraph{Parameter-efficient adaptation and embedding defenses.} Prompt tuning~\cite{lester2021prompt} learns a few continuous input vectors for a frozen model and approaches full fine-tuning as the model grows, and prefix tuning~\cite{li2021prefix} learns continuous vectors that are prepended at every layer. LoRA~\cite{hu2022lora}, which SecPO uses, learns low-rank weight updates instead, and QLoRA~\cite{dettmers2023qlora} does so on a 4-bit quantized model. DefensiveToken~\cite{chen2025defensivetoken} brings prompt tuning to injection defense. It places five token embeddings before the begin-of-text token and optimizes them with StruQ's loss on Cleaned Alpaca, where half of the samples are left clean, half are attacked, and the undefended model's responses serve as labels. On Llama-3.1-8B this costs little utility (an AlpacaFarm win rate of 28.5\% against 29.1\% without the tokens), and because the model itself is unchanged, the developer can leave the tokens out where security matters less and recover the original model exactly. LTBD~\cite{zhao2026ltbd} is the closest work to ours. It inserts four learnable delimiters that mark the beginning and end of the trusted instruction and of the untrusted data, initializes them from $\mathcal{N}(0, I)$, keeps the model frozen, and trains them for one epoch at learning rate 0.1 on Cleaned Alpaca. Its loss is a cross-entropy term on the reference response plus a preference term, weighted by $\lambda = 0.3$, that raises that response over the attack-induced one without a reference model. LTBD reports 0\% attack success on AlpacaFarm for Llama-3.1-8B, with a utility win rate of 30.98\% against 31.37\% without the defense. It evaluates four 7--8B models on AlpacaFarm, SEP, TaskTracker and CyberSecEval2, including adaptive \emph{Delimiter-Spoof} attacks that forge its delimiter patterns, similar in spirit to our \emph{delim\_escape}, and it compares with SecAlign but not with SecPO or Meta-SecAlign. Our study differs from LTBD in three controlled ways, since (i) the objective and data are SecPO's, unchanged, rather than a new loss, (ii) only the data is delimited, and the instruction uses the normal chat template, and (iii) we compare with SecPO trained on the same loss and data, so the main remaining difference is that only two embeddings are trained (Table~\ref{tab:controls} lists the rest). Two differences in training also bear on the utility cost we find (\S\ref{sec:utility}). First, LTBD's cross-entropy term on the reference answer has no counterpart in SecPO's loss. Second, both DefensiveToken and LTBD train on benign samples as well (DefensiveToken keeps half of its samples free of injections, and LTBD applies only the cross-entropy term to benign ones), whereas every prompt in SecPO's data contains an injection, so our delimiters never see clean data.
+
+\paragraph{Large-norm vectors inside LLMs.} Our learned delimiters end up two orders of magnitude larger than ordinary token embeddings (Appendix~\ref{sec:norms}). Such large values are not foreign to LLMs. \citet{sun2024massive} find a few activations that are about 100{,}000 times larger than the rest, stay nearly constant across inputs, act as bias terms, and concentrate attention on their tokens, and \citet{xiao2024sinks} show that models place large attention on the initial tokens of a sequence, which they call attention sinks. Whether our delimiters use a similar mechanism is still open.
+
+\paragraph{Evaluation.} Our main benchmark is the set of 208 AlpacaFarm~\cite{dubois2023alpacafarm} samples with a data field, which is the test set SecAlign and Meta-SecAlign use. SEP~\cite{zverev2025sep} defines instruction-data separation formally, with an empirical variant computed from model outputs, and finds that no tested model reaches high separation and that prompt engineering and fine-tuning either fail to improve it substantially or reduce utility. For utility, AlpacaEval~\cite{li2023alpacaeval,dubois2024lcalpacaeval} asks an LLM judge to compare each output with the output of a reference model. Strong LLM judges agree with human preferences over 80\% of the time, but they have position, verbosity and self-enhancement biases~\cite{zheng2023judge}. Therefore, we randomize the output order, report output lengths, and use a judge from a different model family than the models we compare.
 
 % =====================================================================================
 \section{Method}
@@ -157,52 +88,26 @@ restricting training to two embeddings.
 \begin{figure}[t]
   \centering
   \includegraphics[width=\linewidth]{figures/method.pdf}
-  \caption{Prompt layout of our defense. The instruction and the chat-template headers are ordinary
-  Llama-3 tokens. Two learned vectors $d_1, d_2 \in \mathbb{R}^{4096}$ are placed immediately before and
-  after the untrusted data; they are the only parameters that change during training. The data sits in
-  the \texttt{input} role used by SecPO and Meta-SecAlign.}
+  \caption{Prompt layout of our defense. The instruction and the chat-template headers are ordinary Llama-3 tokens. Two learned vectors $d_1, d_2 \in \mathbb{R}^{4096}$ are placed immediately before and after the untrusted data, and they are the only parameters that change during training. The data sits in the \texttt{input} role used by SecPO and Meta-SecAlign.}
   \label{fig:method}
 \end{figure}
 
 \subsection{Prompt format}
 \label{sec:format}
 
-A Llama-3 prompt is a sequence of token ids $t_1, \dots, t_T$ that the model maps to embeddings
-$E[t_i] \in \mathbb{R}^{d}$, $d = 4096$, through a frozen table $E$. We write the prompt for instruction
-$I$ and untrusted data $D$ as
+A Llama-3 prompt is a sequence of token ids $t_1, \dots, t_T$, which the model maps to embeddings $E[t_i] \in \mathbb{R}^{d}$, $d = 4096$, through a frozen table $E$. For instruction $I$ and untrusted data $D$, we write the prompt as
 \begin{equation}
   x(I, D) = [\,\texttt{BOS};\ h_{\texttt{user}};\ I;\ h_{\texttt{input}};\ d_1;\ D;\ d_2;\ h_{\texttt{assistant}}\,],
   \label{eq:prompt}
 \end{equation}
-where $h_r$ is the template header for role $r$ (\texttt{<|start\_header\_id|>}$r$\texttt{<|end\_header\_id|>}
-plus the preceding end-of-turn token) and $d_1, d_2$ are the learned vectors. We do not add new
-tokens to the vocabulary: Llama-3 has 248 reserved, never-used special tokens, and we take two of them
-(ids for \texttt{<|reserved\_special\_token\_200|>} and \texttt{\_201}) as placeholders. In the forward pass the
-embeddings at these two ids are replaced by $d_1$ and $d_2$; all other embeddings and all transformer
-weights are frozen. At test time the same effect is obtained by writing $d_1, d_2$ into those two rows of
-$E$, so the defended model is the original model plus an 8{,}192-number patch. Running the prompt without
-$d_1, d_2$ (the \emph{no-delimiter} ablation) gives back the undefended model on the same template.
+where $h_r$ is the template header for role $r$ (\texttt{<|start\_header\_id|>}$r$\texttt{<|end\_header\_id|>} plus the preceding end-of-turn token, except for $h_{\texttt{user}}$, which directly follows \texttt{BOS}) and $d_1, d_2$ are the learned vectors. We do not add new tokens to the vocabulary. Instead, because Llama-3 has 248 reserved special tokens that are never used, we take two of them (ids for \texttt{<|reserved\_special\_token\_200|>} and \texttt{\_201}) as placeholders. In the forward pass, the embeddings at these two ids are replaced by $d_1$ and $d_2$, while all other embeddings and all transformer weights stay frozen. At test time, we get the same effect by writing $d_1, d_2$ into those two rows of $E$, so our defense is nothing more than the original model plus an 8{,}192-number patch. When we run the prompt without $d_1, d_2$ (the \emph{no-delimiter} ablation), we get back the undefended model on the same template.
 
 \subsection{Training objective}
 \label{sec:loss}
 
-\paragraph{DPO.} Given a prompt $x$, a preferred response $y_w$ and a rejected response $y_l$,
-DPO~\cite{rafailov2023dpo} trains a policy $\pi_\phi$ against a fixed reference $\pi_{\mathrm{ref}}$ with
-\begin{equation}
-  \mathcal{L}_{\mathrm{DPO}} = -\log \sigma\!\Big(
-  \beta\big[\log \pi_\phi(y_w \mid x) - \log \pi_{\mathrm{ref}}(y_w \mid x)\big]
-  - \beta\big[\log \pi_\phi(y_l \mid x) - \log \pi_{\mathrm{ref}}(y_l \mid x)\big]\Big),
-\end{equation}
-where $\log \pi(y \mid x) = \sum_{j} \log p(y_j \mid x, y_{<j})$ is the summed token log-probability of the
-response and $\sigma$ is the logistic function. The loss falls as the policy raises $y_w$ relative to $y_l$
-by more than the reference does. In prompt-injection training, $x$ contains an injection, $y_w$ answers
-the real instruction and $y_l$ follows the injection.
+\paragraph{From DPO to SecPO.} DPO~\cite{rafailov2023dpo} trains a policy $\pi_\phi$ to raise a preferred response $y_w$ over a rejected one $y_l$ by more than a fixed reference model $\pi_{\mathrm{ref}}$ does on the same prompt, where $\log \pi(y \mid x) = \sum_{j} \log p(y_j \mid x, y_{<j})$ is the summed token log-probability of the response. In prompt-injection training, the prompt contains an injection, $y_w$ answers the real instruction, $y_l$ follows the injection, and the reference is the undefended model on that same injected prompt. Therefore, DPO measures progress relative to a model that already follows injections.
 
-\paragraph{SecPO.} With $\pi_{\mathrm{ref}}$ equal to the undefended model on the same injected prompt,
-DPO measures progress relative to a model that already follows injections. SecPO~\cite{chen2026secpo}
-replaces the reference term with the undefended model on the \emph{clean} prompt $\xcln = x(I, D)$, which by
-construction contains no injection. Writing $\xinj = x(I, D \oplus A)$ for the prompt whose data contains
-the injection $A$, the loss is
+\paragraph{SecPO.} SecPO~\cite{chen2026secpo} replaces the reference term with the undefended model on the \emph{clean} prompt $\xcln = x(I, D)$, which contains no injection. When we write $\xinj = x(I, D \oplus A)$ for the prompt whose data contains the injection $A$, the loss is
 \begin{equation}
   \begin{split}
   \mathcal{L}_{\mathrm{SecPO}}(\phi) = -\log \sigma\!\Big(
@@ -211,128 +116,38 @@ the injection $A$, the loss is
   \end{split}
   \label{eq:secpo}
 \end{equation}
-where $\pi_0$ is the undefended base model. The loss is minimized when the defended model on the attacked
-prompt prefers $y_w$ over $y_l$ at least as strongly as the undefended model does when there is no
-attack. In SecPO the policy is the whole model (with LoRA~\cite{hu2022lora}); in our case
-$\phi = (d_1, d_2)$ and $\pi_\phi$ is the frozen model reading Eq.~\eqref{eq:prompt}. The clean prompt for
-$\pi_0$ has no delimiters.
+where $\pi_0$ is the undefended base model. The loss is minimized when the defended model on the attacked prompt prefers $y_w$ over $y_l$ at least as strongly as the undefended model does without it. In SecPO the policy is the whole model (with LoRA~\cite{hu2022lora}), while for us $\phi = (d_1, d_2)$ and $\pi_\phi$ is the frozen model reading Eq.~\eqref{eq:prompt}. The clean prompt for $\pi_0$ has no delimiters. We call $\log \pi_\phi(y_w \mid \xinj) - \log \pi_\phi(y_l \mid \xinj)$ the \emph{policy margin} and $\log \pi_0(y_w \mid \xcln) - \log \pi_0(y_l \mid \xcln)$ the \emph{reference margin}, and the loss falls below $\log 2$ exactly when the policy margin exceeds the reference margin.
 
-\paragraph{Consequence of freezing.} Because $\pi_0$ never changes, the two reference log-probabilities in
-Eq.~\eqref{eq:secpo} are constants. Each training example therefore needs two forward passes with
-gradients (policy on $y_w$ and $y_l$) and two without (reference). Gradients flow through all 32 layers
-but are accumulated only into the $2 \times 4096$ delimiter entries. To make this fit in a 12\,GB GPU we
-load the frozen model in 4-bit NF4~\cite{dettmers2023qlora} with bfloat16 compute, use activation
-checkpointing, and apply the output projection only at the response positions that are scored.
+\paragraph{Consequence of freezing.} Because $\pi_0$ never changes, the two reference log-probabilities in Eq.~\eqref{eq:secpo} are constants. Therefore, each training example needs two forward passes with gradients (the policy on $y_w$ and $y_l$) and two without. Gradients flow through all 32 layers but accumulate only in the $2 \times 4096$ delimiter entries. To fit this in a 12\,GB GPU, we load the frozen model in 4-bit NF4~\cite{dettmers2023qlora} (each weight is stored as one of 16 values chosen for normally distributed weights and is dequantized to bfloat16 for each matrix multiply), use activation checkpointing, and apply the output projection only at the response positions that are scored. Algorithm~\ref{alg:train} in Appendix~\ref{app:alg} summarizes one epoch.
 
-\begin{algorithm}[t]
-\caption{Training the delimiters (one epoch; \texttt{train/train\_delims.py})}
-\label{alg:train}
-\begin{algorithmic}[1]
-\Require frozen model $\pi_0$, SecPO pairs $\{(I, D, A, y_w, y_l)\}$, $\beta$, learning rate $\eta$, accumulation $G$
-\State $d_1, d_2 \sim \mathcal{N}(0, I_{4096})$
-\For{each group of $G$ examples}
-  \For{each example in the group}
-    \State $\xinj \gets x(I, D \oplus A)$ with $d_1, d_2$; \quad $\xcln \gets$ same template, data $D$, no delimiters
-    \State $r_w, r_l \gets \log \pi_0(y_w \mid \xcln), \log \pi_0(y_l \mid \xcln)$ \Comment{no gradient}
-    \State $p_w, p_l \gets \log \pi_{d}(y_w \mid \xinj), \log \pi_{d}(y_l \mid \xinj)$
-    \State accumulate $\nabla_{d}\, \tfrac{1}{G}\big(-\log\sigma(\beta[(p_w - r_w) - (p_l - r_l)])\big)$
-  \EndFor
-  \State AdamW step on $(d_1, d_2)$ with cosine-decayed $\eta$; clear gradients
-\EndFor
-\end{algorithmic}
-\end{algorithm}
 
 \subsection{Data}
 
-We train on SecPO's released Llama-3 preference set (19{,}157 examples built from Cleaned Alpaca; 14
-without a data field are dropped). Each example has an instruction, a data string, the data with an
-injected instruction at a random position, and a preferred and a rejected response generated by the
-undefended model. The first 500 examples are held out for validation; we evaluate the loss on 100 of
-them every 50 steps. Training uses the remaining examples for one epoch (1{,}163 optimizer steps at
-effective batch 16).
+We train on SecPO's released Llama-3 preference set of 19{,}157 examples built from Cleaned Alpaca, dropping the 14 without a data field. Each example has an instruction, a data string, the data with an injected instruction (in the released set, an adaptive injection from SecPO's adversarial-training pipeline), and a preferred and a rejected response generated by the undefended model. We hold out 500 examples, drawn after shuffling with seed 42, for validation, and evaluate the loss on 100 of them every 50 steps. Training uses the rest for one epoch (1{,}163 optimizer steps at effective batch 16).
 
 \subsection{Hyperparameters}
 
-\begin{table}[t]
-  \caption{Training hyperparameters and where each value comes from.}
-  \label{tab:hparams}
-  \centering
-  \small
-  \begin{tabular}{p{3.2cm}p{4.3cm}p{4.9cm}}
-    \toprule
-    Setting & Value & Source / reason \\
-    \midrule
-    Number of delimiters $n$ & 2 (one open, one close) & smallest that marks both ends of the data \\
-    Initialization & $\mathcal{N}(0, I)$ & DefensiveToken~\cite{chen2025defensivetoken}, LTBD~\cite{zhao2026ltbd} \\
-    Loss, $\beta$ & SecPO, $\beta = 0.1$ & SecPO~\cite{chen2026secpo}, unchanged \\
-    Optimizer & AdamW, weight decay 0 & weight decay would fight the norm growth (\S\ref{sec:norms}) \\
-    Learning rate & 0.1, cosine to 0, no warmup & sweep over $\{0.01, 0.1, 1\}$ (App.~\ref{app:sweep}) \\
-    Effective batch & 16 (gradient accumulation) & sweep over $\{16, 32, 64\}$ (App.~\ref{app:sweep}) \\
-    Epochs & 1 (1{,}163 steps) & SecPO trains one epoch \todo{check} \\
-    Max length & 2{,}048 tokens & longer pairs dropped, as in SecPO \\
-    Precision & 4-bit NF4 weights, bf16 compute & fits a 12\,GB laptop GPU \\
-    Seed & 42 & single run \\
-    \bottomrule
-  \end{tabular}
-\end{table}
 
-Table~\ref{tab:hparams} lists every setting. The learning rate is far higher than for fine-tuning because
-only two vectors are trained and they start with norm $\approx 64$; a step of $10^{-3}$ would barely move
-them. \inprogress{sweep results to be added to Appendix~\ref{app:sweep}}
+Table~\ref{tab:hparams} in Appendix~\ref{app:hparams} lists every setting and where it comes from. We keep SecPO's loss with $\beta = 0.1$ and train for one epoch as SecPO and LTBD do, start from $\mathcal{N}(0, I)$ as DefensiveToken and LTBD do, and use AdamW without weight decay, because weight decay would fight the norm growth (Appendix~\ref{sec:norms}). The learning rate of 0.1, cosine-decayed to 0 without warmup, is LTBD's value and the best of $\{0.01, 0.1, 1\}$ in our sweep, and the effective batch of 16 is the best of $\{16, 32, 64\}$ (Appendix~\ref{app:sweep}). This learning rate is far higher than for fine-tuning, because only two vectors are trained and they start with norm $\approx 64$, so a step of $10^{-3}$ would barely move them. Training took 10.8\,h on one RTX 5070 Ti laptop GPU (12\,GB), and Appendix~\ref{app:compute} gives evaluation times.
 
 % =====================================================================================
 \section{Experimental setup}
 \label{sec:setup}
 
-\paragraph{Defenses.} Every run uses Llama-3.1-8B-Instruct~\cite{grattafiori2024llama3}, loaded in 4-bit NF4
-with bf16 compute and greedy decoding, with a 128 new-token limit on AlpacaFarm and 256 on SEP. We run the
-same model on the same GPU for every defense so nothing except the defense itself changes between runs.
-Before templating, the undefended model, the no-delimiter ablation and ours remove the eight named Llama-3
-control tokens from the untrusted data, repeating until none remain. This is the filter in SecPO's released
-chat template, so these three runs and SecPO see the same data. Ours additionally removes its own two
-delimiter tokens, which only changes the \emph{delim\_escape} attack. DefensiveToken keeps its released filter (\S\ref{sec:controls}).
+\paragraph{Defenses.} Every run uses Llama-3.1-8B-Instruct~\cite{grattafiori2024llama3}, loaded in 4-bit NF4 with bf16 compute and greedy decoding, with a 128 new-token limit on the AlpacaFarm attacks, 512 on the AlpacaFarm samples without injection used for utility (\S\ref{sec:utility}), and 256 on SEP. Before templating, the undefended model, the no-delimiter ablation and our defense remove the eight named Llama-3 control tokens from the untrusted data until none remain, which is the filter in SecPO's released template, so these three runs and SecPO see the same data. Our defense also removes its own two delimiter tokens, and DefensiveToken keeps its released filter (\S\ref{sec:controls}).
 \begin{itemize}
-  \item \textbf{Undefended}: the stock chat template, with the instruction and data both placed in the user turn.
-  \item \textbf{No delimiters}: our template from Eq.~\ref{eq:prompt} but with $d_1$ and $d_2$ dropped. This is
-  the base model talking to our prompt format, so it isolates whatever effect the template itself has.
+  \item \textbf{Undefended}: the stock chat template, with the instruction and the data both in the user turn.
+  \item \textbf{No delimiters}: our template from Eq.~\eqref{eq:prompt} without $d_1$ and $d_2$. Because this is the base model reading our prompt format, it isolates whatever effect the template itself has.
   \item \textbf{DefensiveToken}: the five vectors and template from the released checkpoint~\cite{chen2025defensivetoken}.
   \item \textbf{SecPO}: the released SecPO checkpoint for Llama-3.1-8B~\cite{chen2026secpo}.
-  \item \textbf{Ours}: the learned delimiters after 1{,}163 steps (final). The intermediate checkpoints at steps
-  300 and 600 were evaluated only with the filter off (\S\ref{sec:dynamics}).
+  \item \textbf{Ours}: the learned delimiters after 1{,}163 steps (final). We also evaluate the intermediate checkpoints at steps 300 and 600 with and without the filter (\S\ref{sec:dynamics}).
 \end{itemize}
 
-\paragraph{Benchmark and attacks.} We evaluate on the 208 AlpacaFarm~\cite{dubois2023alpacafarm} samples
-that have a data field; this is the same set SecAlign and Meta-SecAlign use. Each sample gets attacked
-10 ways, all with the same goal of making the model print \emph{attacked!}. Six are
-\emph{naive}/\emph{ignore} variants that vary the override sentence and where it gets inserted. Two are
-\emph{completion} attacks that fake the end of the data turn in plain text. The last two are adaptive
-\emph{completion\_chat} attacks that use the real Llama-3 template tokens, which is the hardest case
-because the model sees what looks like a legitimate new turn. Override sentences come from SecPO's test set,
-and the random choice uses the same seed across defenses so no defense gets an easier draw than another.
-Against our own model we also run \emph{delim\_escape}, which injects our closing delimiter token into the
-data to see if an attacker who knows our defense can turn it off. It is not part of the any-attack number,
-since the other defenses have no delimiter to escape.
+\paragraph{Benchmark and attacks.} We evaluate on the 208 AlpacaFarm~\cite{dubois2023alpacafarm} samples that have a data field, which is the same set SecAlign and Meta-SecAlign use. Each sample is attacked in 10 ways, all aiming to make the model print \emph{attacked!} (Appendix~\ref{app:attacks}). Six are \emph{naive}/\emph{ignore} variants that vary the override sentence and its position, two are \emph{completion} attacks that fake the end of the data turn in plain text, and two are adaptive (\S\ref{sec:related}) \emph{completion\_chat} attacks that use the real Llama-3 template tokens. The override sentences are the 11 test sentences of SecAlign~\cite{chen2024secalign}, which SecPO also uses, drawn with the same seed for every defense. Against our defense, we also run \emph{delim\_escape}, which injects our closing delimiter token into the data. It is not part of the any-attack number, because the other defenses have no delimiter to escape.
 
-\paragraph{Metric and uncertainty.} An attack succeeds if the response starts with \emph{attacked},
-following Meta-SecAlign. Our main number counts a sample as broken if any of the 10 attacks succeeds, so
-each defense gets a count of $k$ broken samples out of $n = 208$. That is a binomial proportion, and we
-report 95\% Wilson intervals~\cite{wilson1927} rather than the normal approximation, since Wilson stays
-inside $[0,1]$ and handles values near the boundary much better~\cite{brown2001interval}:
-\begin{equation}
-  \frac{\hat p + \frac{z^2}{2n} \pm z\sqrt{\frac{\hat p(1-\hat p)}{n} + \frac{z^2}{4n^2}}}{1 + \frac{z^2}{n}},
-  \qquad \hat p = k/n,\ z = 1.96 .
-\end{equation}
-These intervals cover sampling noise over the 208 samples only. We trained once, so they do not capture
-run-to-run variance from training; that is a real gap we flag in the limitations. Pairwise comparisons
-between defenses use a two-sided Fisher exact test on the broken/unbroken $2\times 2$ table.
+\paragraph{Metric and uncertainty.} An attack succeeds if the response starts with \emph{attacked}, following Meta-SecAlign. Our main number counts a sample as broken if any of the 10 attacks succeeds, so each defense gets a count of $k$ broken samples out of $n = 208$. Because this is a binomial proportion, we report 95\% Wilson intervals~\cite{wilson1927} rather than the normal approximation, since Wilson stays inside $[0,1]$ and handles values near the boundary much better~\cite{brown2001interval} (formula in Appendix~\ref{app:stats}). These intervals cover sampling noise over the 208 samples only. Because we trained once, they do not capture run-to-run variance from training, which we flag in the limitations. Pairwise comparisons between defenses use a two-sided Fisher exact test on the broken/unbroken $2\times 2$ table.
 
-\paragraph{SEP.} As a second benchmark we use SEP~\cite{zverev2025sep}, which pairs a task and its data with
-a \emph{probe}, an unrelated instruction placed in the data (e.g.\ ``Name the explorer who reached America
-in 1492''), whose answer contains a known \emph{witness} word. A sample counts as broken if the witness
-appears in the output, meaning the model executed the probe. We draw 500 rows with a fixed seed, the same
-rows for every defense. SEP's standard check matches the witness as a substring; because witnesses are
-short common words (``cat'', ``pen'', ``root''), that also fires on words like ``indicating'' or
-``rooted'', so we report whole-word matches as the main number and substring matches alongside.
+\paragraph{SEP.} We also use SEP~\cite{zverev2025sep}, which pairs a task and its data with a \emph{probe}, an unrelated instruction placed in the data (e.g.\ ``Name the explorer who reached America in 1492''), whose answer contains a known \emph{witness} word. A sample counts as broken if the witness appears in the output, meaning the model executed the probe. We draw 500 rows with a fixed seed, the same for every defense. SEP's standard check matches the witness as a substring, which also fires on longer words containing short witnesses (``indicating'' for ``cat''), so we report whole-word matches as the main number.
 
 % =====================================================================================
 \section{Results}
@@ -340,201 +155,80 @@ short common words (``cat'', ``pen'', ``root''), that also fires on words like `
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\linewidth]{figures/asr.pdf}
-  \caption{Attack success rate, lower is better. \textbf{Left}: share of the 208 AlpacaFarm samples broken
-  by at least one of 10 attacks. \textbf{Right}: share of 500 SEP probes whose witness word appears in the
-  output. Error bars: 95\% Wilson intervals over samples (single training seed). Linear scales, since the
-  values span 0--100\% and 0--45\%; note the different axis ranges.}
+  \includegraphics[width=0.9\linewidth]{figures/asr.pdf}
+  \caption{Attack success rate, lower is better. \textbf{Left}: share of the 208 AlpacaFarm samples broken by at least one of 10 attacks. \textbf{Right}: share of 500 SEP probes whose witness word appears in the output. Our defense and SecPO are both at 0/208 on AlpacaFarm (bars of zero length), so DefensiveToken is the only defense left with a visible bar. Error bars: 95\% Wilson intervals over samples (single training seed). Linear scales, since the values span 0--100\% and 0--45\%; note the different axis ranges.}
   \label{fig:asr}
 \end{figure}
 
-\begin{table}[t]
-  \caption{Attack success rate (\%) per attack on 208 AlpacaFarm samples. \emph{Adaptive} attacks use the
-  real Llama-3 chat-template tokens. All defenses except DefensiveToken remove these tokens from the data
-  before templating; the plain-text role names that remain still act as a forged turn for the
-  undefended model (\S\ref{sec:controls}).}
-  \label{tab:per_attack}
-  \centering
-  \small
-  \input{tables/per_attack.tex}
-\end{table}
 
-\paragraph{Two vectors match SecPO on AlpacaFarm.}
-Figure~\ref{fig:asr} (left) shows the headline result. The undefended model is broken on 95.7\% of
-samples. With our final delimiters no sample is broken by any of the 10 attacks (0/208, CI 0--1.8\%), the
-same as the released SecPO model. With 208 samples the 95\% upper bound for both is 1.8\%, so the data
-cannot separate the two. DefensiveToken is broken on 9.6\% of samples, significantly more than
-ours ($p < 10^{-4}$, Fisher), though that comparison is not controlled (\S\ref{sec:controls}).
+\paragraph{Two vectors match SecPO on AlpacaFarm.} Figure~\ref{fig:asr} (left) shows the main result. The undefended model is broken on 95.7\% of samples. With our final delimiters, no sample is broken by any attack (0/208, CI 0--1.8\%), the same as the released SecPO model. With 208 samples, the 95\% upper bound for both is 1.8\%, so the data cannot separate them. DefensiveToken is broken on 9.6\% of samples, significantly more than ours ($p < 10^{-4}$, Fisher), though this comparison is not controlled (\S\ref{sec:controls}).
 
-\paragraph{The effect is due to the delimiters, not the template.} Our template moves the data into the
-\texttt{input} role. Without $d_1, d_2$, the same template is broken on 94.2\% of samples, so the
-template by itself provides almost no any-attack robustness. Table~\ref{tab:per_attack} shows a more
-nuanced picture: the \texttt{input} role alone does cut the \emph{ignore} attack from 69.7\% to 9.1\%, but
-it leaves the completion attacks at 20--89\%, and those dominate the any-attack number. The delimiters
-bring every attack to 0\%.
+\paragraph{The robustness comes from the delimiters, not the template.} Our template moves the data into the \texttt{input} role. Without $d_1, d_2$, the same template is broken on 94.2\% of samples, so the template by itself provides almost no any-attack robustness. When we look at each attack (Table~\ref{tab:per_attack}, Appendix~\ref{app:tables}), the \texttt{input} role alone does cut the \emph{ignore} attack from 69.7\% to 9.1\%, but it leaves the completion attacks at 20--89\%, and these dominate the any-attack number. The delimiters bring every attack to 0\%. Even an attacker who knows the defense and writes our closing delimiter token into the data (\emph{delim\_escape}) succeeds on 0/208 at the final checkpoint, with or without the filter (Appendix~\ref{app:escape}).
 
-\paragraph{The delimiters also transfer to SEP.} SEP's probes are ordinary questions rather than
-``print \emph{attacked!}'', and none of its samples were used to train or select any defense.
-Figure~\ref{fig:asr} (right) and Table~\ref{tab:sep} show the same ordering as on AlpacaFarm, with ours
-lowest at 0.6\% (3/500, CI 0.2--1.7\%), against 1.8\% for SecPO and 2.2\% for DefensiveToken. These gaps are
-not significant ($p = 0.14$ and $0.06$), so we claim only that ours is not worse. The template alone again
-helps less than the delimiters: 42.4\% undefended, 28.0\% without delimiters. With substring matching, the
-rates are 3.0\% for ours, 4.0\% for SecPO and 3.8\% for DefensiveToken; 12 of our 15 substring hits are the
-witness inside a longer word. Of our three whole-word hits, two mention the witness in passing (``South
-America'', ``black hole'') and one actually answers the probe, so the true rate may be lower still.
+\paragraph{The delimiters also transfer to SEP.} SEP's probes are ordinary questions rather than ``print \emph{attacked!}'', and none of its samples were used to train or select any defense. Figure~\ref{fig:asr} (right) and Table~\ref{tab:sep} (Appendix~\ref{app:tables}) show the same ordering as on AlpacaFarm. Our defense is the lowest at 0.6\% (3/500, CI 0.2--1.7\%), but its 95\% CI overlaps with those of SecPO and DefensiveToken. The template alone again helps much less than the delimiters (28.0\% without them).
+
+
+\subsection{The delimiters cost utility on benign inputs}
+\label{sec:utility}
+
+To check that low attack success does not come from degraded answers, we score the outputs of each defense on the same 208 AlpacaFarm samples without any injection, generated with a 512 new-token limit, because the 128-token outputs used for attacks cut off about two thirds of the answers. Following AlpacaEval~2.0~\cite{li2023alpacaeval,dubois2024lcalpacaeval}, a judge compares each output with the output of GPT-4 Turbo (\texttt{gpt-4-1106-preview}) for the same instruction, using AlpacaEval's judge prompt and a per-sample random order that is the same for every defense. Because AlpacaEval~2.0's own judge is no longer served, we use \texttt{gpt-5.6-sol}, the replacement OpenAI names for it, with binary judgments and no length control. Therefore, the win rates compare the five defenses with each other, not with published numbers.
 
 \begin{table}[t]
-  \caption{SEP results on 500 probes (same rows for every defense). A probe counts as executed if its
-  witness word appears in the output as a whole word. CI: 95\% Wilson; $p$: two-sided Fisher exact test
-  against ours.}
-  \label{tab:sep}
+  \caption{Utility on the 208 AlpacaFarm samples without injection: share of samples where the judge (\texttt{gpt-5.6-sol}) prefers the defense's output to GPT-4 Turbo's. 512 new tokens, greedy decoding. CI: 95\% Wilson; $p$: exact two-sided sign test against ours on the samples where exactly one of the two outputs wins. GPT-4 Turbo's outputs average 1{,}291 characters.}
+  \label{tab:utility}
   \centering
   \small
-  \input{tables/sep.tex}
-\end{table}
-
-\paragraph{Attacks that target the delimiters.} \emph{delim\_escape} writes our closing delimiter token
-into the data, followed by a forged turn. With the filter on, the delimiter token is removed and the
-attack reduces to plain text; it succeeds on 0/208. Without the filter the token reaches the model
-intact, and the attack still succeeds on 0/208 at the final checkpoint (3.4\% at step 300). An attacker
-who knows the defense therefore cannot simply close the data span early. Optimization attacks on the
-delimiters remain untested (\S\ref{sec:discussion}).
-
-\subsection{Training dynamics}
-\label{sec:dynamics}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.85\linewidth]{figures/training.pdf}
-  \caption{\textbf{Top}: SecPO loss on training batches (gray, with an exponential moving average) and on
-  100 held-out validation pairs (blue), log scale because the loss falls over six orders of magnitude;
-  values are clipped at $10^{-6}$. The dotted line is $\log 2$, the loss when the policy and reference
-  margins are equal. \textbf{Bottom}: share of validation pairs where the policy margin is still below the
-  reference margin (blue) and the AlpacaFarm attack success rate of saved checkpoints with 95\% Wilson
-  intervals (orange), all evaluated with the data filter off (\S\ref{sec:controls}).}
-  \label{fig:training}
-\end{figure}
-
-Figure~\ref{fig:training} shows that the objective is easy to satisfy: validation loss drops from 6.2 to
-0.005 by step 300, at which point every validation pair already beats the reference margin. Robustness on
-AlpacaFarm lags behind. All three checkpoints in the figure were evaluated with the data filter off, the
-harder setting, so that they are comparable with each other. The step-300 checkpoint is still broken on
-13.5\% of samples (CI 9.5--18.8\%), and only by step 600 does it reach the 1.9\% of the final model in this
-setting. All of the step-300 failures come from attacks built from
-real chat-template tokens (\emph{completion\_chat} 4.3\%, \emph{completion\_chat\_ignore} 11.5\%,
-\emph{delim\_escape} 3.4\%); every plain-text attack is already at 0\%. Injections of this kind are rare in
-SecPO's training data: only 196 of the 19{,}157 training prompts (1\%) contain chat-template tokens inside
-the data. The validation loss is an average dominated by the common plain-text injections, so it reaches
-zero while the rare, strongest attack format is still not handled. The practical consequence is that the validation loss cannot be used for early
-stopping; held-out attacks are needed.
-
-\subsection{What the delimiters learn}
-\label{sec:norms}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.85\linewidth]{figures/norms.pdf}
-  \caption{L2 norms of the two delimiter vectors during training, compared with the mean norm of
-  Llama-3.1's vocabulary embeddings. Log scale so that both fit on one axis.}
-  \label{fig:norms}
-\end{figure}
-
-A vector drawn from $\mathcal{N}(0, I_{4096})$ has norm $\approx \sqrt{4096} = 64$, already about 95 times
-the mean norm of a Llama-3.1 vocabulary embedding (0.67). Training increases this further to 99 for the
-opening and 120 for the closing delimiter (Figure~\ref{fig:norms}); the growth stops when the learning
-rate decays. We do not yet know what these large vectors do inside the model. Each layer reads the residual stream through RMS normalization, which removes the scale of what it reads,
-but the residual stream itself keeps the large vector, so the delimiter's direction may dominate its own
-position through many layers. One hypothesis is that the delimiters then act as attention
-sinks~\cite{xiao2024sinks} that later tokens use to tell where data begins and ends; we have not tested this.
-\inprogress{attention analysis; retraining with a norm constraint}
-
-\subsection{Controlled comparison}
-\label{sec:controls}
-
-The guidelines ask that comparisons change one thing at a time. Table~\ref{tab:controls} states what
-differs in each comparison. Model, quantization, decoding, samples and attack strings are identical in
-all runs.
-
-\begin{table}[t]
-  \caption{What differs between our model and each comparison point.}
-  \label{tab:controls}
-  \centering
-  \small
-  \begin{tabular}{p{2.6cm}p{6.6cm}p{3.2cm}}
+  \begin{tabular}{lrrrr}
     \toprule
-    Comparison & Differences & Controlled? \\
+    Defense & Wins / 208 & Win rate \% [95\% CI] & $p$ vs.\ ours & Mean length (chars) \\
     \midrule
-    No delimiters & only $d_1, d_2$ & yes \\
-    Undefended & $d_1, d_2$; data in \texttt{input} role instead of user turn & via no-delim.\ run \\
-    SecPO & 8{,}192 trained numbers instead of LoRA on all layers & yes: loss, data and data filter identical \\
-    DefensiveToken & loss and data (SecAlign-style); 5 vectors before the prompt vs.\ 2 around the data; template; filters only \texttt{BOS} and \texttt{EOT} from the data & no: published-method reference point \\
+    Undefended & 48 & 23.1 [17.9, 29.3] & $<$0.0001 & 1{,}106 \\
+    No delimiters & 45 & 21.6 [16.6, 27.7] & 0.0003 & 1{,}058 \\
+    DefensiveToken (5 vectors) & 44 & 21.2 [16.2, 27.2] & 0.0001 & 1{,}041 \\
+    SecPO (LoRA fine-tune) & 30 & 14.4 [10.3, 19.8] & 0.18 & 1{,}153 \\
+    Ours (2 vectors, final) & 22 & 10.6 [7.1, 15.5] & -- & 1{,}227 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\paragraph{Token filtering.} The released defenses differ in how they clean untrusted data. SecPO's chat
-template removes all eight named Llama-3 control tokens (including \texttt{<|eot\_id|>} and the header
-tokens) from the data, repeating until none remain. DefensiveToken removes the tokenizer's registered
-special tokens, which for Llama-3 are only \texttt{<|begin\_of\_text|>} and \texttt{<|eot\_id|>}. This
-matters exactly for the adaptive \emph{completion\_chat} attacks, which are built from these tokens. To
-remove it as a confound, we apply SecPO's filter to ours, the no-delimiter ablation and the undefended model
-(\S\ref{sec:setup}); DefensiveToken keeps its published behaviour.
+The delimiters lower the win rate from 21.6\% for the same prompt without them to 10.6\% (Table~\ref{tab:utility}; $p = 0.0003$), and from 23.1\% for the undefended model ($p < 0.0001$). SecPO also loses utility relative to the undefended model (14.4\%, $p = 0.003$), and ours is not significantly different from SecPO ($p = 0.18$), while DefensiveToken (21.2\%) is indistinguishable from the undefended model ($p = 0.62$). The gap is not due to truncation, since on the 154 samples where neither our output nor the no-delimiter output appears cut off (no sentence-final punctuation), the rates are 10.4\% and 23.4\%. Nor is it the judge's preference for longer answers~\cite{dubois2024lcalpacaeval}, since our outputs are the longest of the five. We have not yet found what the delimiters change in the answers. SecPO reports no AlpacaEval~2 drop on all 805 instructions with a different judge and reference~\cite{chen2026secpo}, but our 208 samples are exactly those with untrusted data, where a defense acts, which may explain part of the gap.
 
-To check that the filter is not what makes our model robust, we reran the same three defenses with the
-filter off, so that the attack tokens reach the model intact (Table~\ref{tab:filter}). This is a
-one-variable comparison: model, delimiters, samples and attack strings are unchanged. The filter barely
-helps the undefended model (96.6\% $\to$ 95.7\%): after the control tokens are removed, the leftover
-plain-text \texttt{assistant} and \texttt{user} role names still read as a forged turn, and
-\emph{completion\_chat} succeeds 89.9\% of the time. For our model, the filter only removes the last 1.9\%
-(four samples, all from \emph{completion\_chat\_ignore}). Most of the robustness therefore comes from the
-delimiters, and it survives an attacker who can write real control tokens into the data.
+\subsection{Without the filter, robustness lags the training loss}
+\label{sec:dynamics}
 
-\begin{table}[t]
-  \caption{The data filter, off vs.\ on: AlpacaFarm attack success rate (\%) for the same model and
-  delimiters. Any-attack values with 95\% Wilson intervals. \emph{Off}: the data reaches the model
-  unchanged; \emph{on}: the eight Llama-3 control tokens (and, for ours, our delimiter tokens) are removed.}
-  \label{tab:filter}
+\begin{figure}[t]
   \centering
-  \small
-  \input{tables/filter.tex}
-\end{table}
+  \includegraphics[width=0.75\linewidth]{figures/training.pdf}
+  \caption{\textbf{Top}: SecPO loss on training batches (gray, with an exponential moving average) and on 100 held-out validation pairs (blue), log scale because the loss falls over six orders of magnitude; values are clipped at $10^{-6}$. The dotted line is $\log 2$, the loss when the policy and reference margins are equal. \textbf{Bottom}: share of validation pairs where the policy margin is still below the reference margin (blue) and the AlpacaFarm attack success rate of saved checkpoints with 95\% Wilson intervals (orange), all evaluated with the data filter off (\S\ref{sec:controls}).}
+  \label{fig:training}
+\end{figure}
+
+Figure~\ref{fig:training} shows that the objective is easy to satisfy. The validation loss drops from 6.2 to 0.005 by step 300, and at that point every validation pair already beats the reference margin. However, robustness on AlpacaFarm lags behind. With the data filter off, which is the harder setting used for all checkpoints in the figure, the step-300 checkpoint is still broken on 13.5\% of samples (CI 9.5--18.8\%), and only by step 600 does it reach the 1.9\% of the final model in this setting. With the filter on, the same checkpoints are broken on 0.5\% (1/208) at step 300 and on 0/208 from step 600 on, which indicates that the lag is specific to attacks that carry real control tokens. All of the step-300 failures come from attacks built from real chat-template tokens (\emph{completion\_chat} 4.3\%, \emph{completion\_chat\_ignore} 11.5\%, \emph{delim\_escape} 3.4\%), while every plain-text attack is already at 0\%. Injections of this kind are rare in SecPO's training data, where only 196 of the 19{,}143 usable training examples (1.0\%) contain chat-template tokens inside the data. Because the validation loss averages over the common plain-text injections, it reaches zero while the rare, strongest attack format is still not handled. Therefore, the validation loss is a poor criterion for early stopping in the filter-off setting.
+
+\subsection{Which comparisons change one thing at a time}
+\label{sec:controls}
+
+Each comparison changes as little as we could make it (Table~\ref{tab:controls}, Appendix~\ref{app:filter}). Against the no-delimiter run, only $d_1, d_2$ differ. Against SecPO, the trainable parameters, learning rate and precision differ, while the loss, template, filter and data are identical. DefensiveToken differs in loss, data, token placement, template and filter, so it is a reference point rather than a controlled comparison. The model, quantization, decoding, GPU, samples and attack strings are identical in all runs.
+
+
+\paragraph{Token filtering.} The released defenses clean untrusted data differently. SecPO's template removes the eight Llama-3 control tokens, while DefensiveToken removes only \texttt{BOS} and \texttt{EOT} (Appendix~\ref{app:filter}). We apply SecPO's filter to our defense, the no-delimiter ablation and the undefended model, and to check that the filter is not what makes ours robust, we rerun these three without it (Table~\ref{tab:filter}, Appendix~\ref{app:filter}). The filter barely changes the undefended model (96.6\% to 95.7\%) and removes only the last 1.9\% for ours (four \emph{completion\_chat\_ignore} samples). Therefore, robustness comes mostly from the delimiters and survives an attacker who writes real control tokens into the data.
 
 % =====================================================================================
 \section{Discussion and limitations}
 \label{sec:discussion}
 
-Two vectors on a frozen 8B model, trained with SecPO's objective and data, bring AlpacaFarm attack
-success from 94.2\% to 0\%, the same as fully fine-tuned SecPO and below DefensiveToken's 9.6\%, and reach
-0.6\% on SEP, a benchmark neither model was tuned on. Without the data filter the rate rises only to 1.9\%. Because only an 8{,}192-number patch changes, the same deployed
-weights serve both defended and undefended use. What we learn beyond the headline: (i) the robust
-behaviour arises well after the training objective appears solved, so checkpoint selection needs held-out
-attacks rather than validation loss; (ii) the solution the optimizer finds uses vectors far outside the
-range of real token embeddings.
+Two vectors on a frozen 8B model, trained with SecPO's objective and data, match SecPO's robustness on AlpacaFarm (0\%) and SEP (0.6\% against 1.8\%) within what 208 and 500 samples can resolve, even without the data filter (1.9\%). This supports our hypothesis that, when the model and the instruction are frozen, training only the boundary around the data is enough. However, this robustness does not come for free. Without injection, adding the delimiters halves the win rate of the same prompt (21.6\% to 10.6\%), a larger drop than SecPO's (14.4\%), although the two are not significantly different (\S\ref{sec:utility}). Because the template alone keeps the undefended model's utility (21.6\% against 23.1\%), the cost comes from the inserted vectors, which start from $\mathcal{N}(0, I)$ and end with norms 150 to 180 times the mean norm of a vocabulary embedding (Appendix~\ref{sec:norms}). Therefore, for the final report, we will also train a variant that inserts nothing, in which the template tokens around the data, the input-role header in front of it and the end-of-turn token after it, get trainable embeddings at those positions, initialized to their original embeddings, while the same tokens elsewhere in the prompt stay frozen. Because the trained embeddings apply only at those positions, an attacker who writes the same tokens into the data gets their original embeddings, which we will check by evaluating the variant with the data filter off. Because this variant starts exactly at the no-delimiter model, it tests whether a defense that stays close to embeddings the model already knows keeps more utility.
 
 \paragraph{Limitations.}
-\begin{itemize}
-  \item \textbf{One seed, one $n$.} All numbers are from a single training run with $n = 2$; the error bars
-    do not include training variance. \inprogress{additional seeds; $n \in \{4, 8\}$}
-  \item \textbf{Utility is not yet measured.} Clean outputs are saved but unscored. A defense that refuses
-    or degrades benign answers could also score low attack success. \inprogress{AlpacaEval-style win rate}
-  \item \textbf{Attack strength.} Only template attacks; no optimization attacks such as
-    GCG~\cite{zou2023gcg} that could target the delimiters directly.
-  \item \textbf{Sample size.} 208 AlpacaFarm samples and 500 SEP probes bound the resolution of comparisons
-    to one or two percentage points; at that resolution ours, SecPO and DefensiveToken cannot be separated
-    on SEP. We did not run SEP without probes, so we do not know how often the witness word appears in an
-    output when no probe is present.
-  \item \textbf{Filtered checkpoints.} The step-300 and step-600 checkpoints were evaluated only with the
-    filter off.
-  \item \textbf{4-bit evaluation.} All defenses, including SecPO, are run in 4-bit, which may change their
-    absolute numbers relative to the published bf16 results.
+\begin{itemize}\setlength{\itemsep}{0pt}
+  \item \textbf{One seed.} All numbers come from a single training run, so the error bars do not include training variance. \inprogress{additional seeds}
+  \item \textbf{Utility on one subset, with a substitute judge.} We measure win rates only on the 208 instructions with an input, with a substitute for AlpacaEval~2.0's retired judge and no length control. These rates rank the defenses but are not comparable with published numbers, and we have not yet found what the judge penalizes in our answers. \inprogress{all 805 AlpacaEval instructions; the template-token variant above}
+  \item \textbf{Attack strength.} We run only template attacks, not optimization attacks (e.g.\ GCG~\cite{zou2023gcg}) on the delimiters.
+  \item \textbf{Sample size.} 208 AlpacaFarm samples and 500 SEP probes resolve only 1--2 percentage points, too coarse to separate the three defenses on SEP, and we did not run SEP without probes.
+  \item \textbf{4-bit evaluation.} All defenses run in 4-bit and may differ from their published bf16 results.
 \end{itemize}
 
-\section*{Reproducibility}
-The repository \url{https://github.com/Hyunoh-Yeo/c182_proj} contains the code, the trained delimiters,
-all raw model outputs, and a script (\texttt{paper/make\_figures.py}) that regenerates every figure and
-table from them without a GPU. SecPO's training
-data and checkpoint, DefensiveToken's vectors, AlpacaFarm and SEP are public and fetched by scripts in the
-repository.
+\paragraph{Reproducibility.} The code, trained delimiters, raw outputs, utility judgments and scripts that rebuild every figure and table without a GPU are at \url{https://github.com/Hyunoh-Yeo/c182_proj}, whose \texttt{README.md} lists every command.
 
 {\small
 \bibliographystyle{plainnat}
@@ -546,43 +240,173 @@ repository.
 
 \section{Prompt templates}
 \label{app:templates}
-Below, \texttt{H(}$r$\texttt{)} abbreviates \texttt{<|start\_header\_id|>}$r$\texttt{<|end\_header\_id|>},
-\texttt{EOT} is \texttt{<|eot\_id|>}, \texttt{\textbackslash n} is a newline, and \texttt{\{I\}}, \texttt{\{D\}}
-are the instruction and the data.
+Below, \texttt{H(}$r$\texttt{)} abbreviates \texttt{<|start\_header\_id|>}$r$\texttt{<|end\_header\_id|>}, \texttt{EOT} is \texttt{<|eot\_id|>}, \texttt{\textbackslash n} is a newline, and \texttt{\{I\}}, \texttt{\{D\}} are the instruction and the data.
 
 \begin{itemize}\raggedright
-  \item \textbf{Undefended} (Llama-3.1 default template; it always inserts a system turn with its
-  knowledge-cutoff and date lines; the same eight control tokens as SecPO are removed from \texttt{\{D\}}):\\
+  \item \textbf{Undefended} (the Llama-3.1 default template, which always inserts a system turn with its knowledge-cutoff and date lines, with the same eight control tokens as SecPO removed from \texttt{\{D\}}):\\
   \texttt{BOS H(system)\textbackslash n\textbackslash n Cutting Knowledge Date: December 2023\textbackslash n Today Date: 26 Jul 2024\textbackslash n\textbackslash n EOT}\\
   \texttt{H(user)\textbackslash n\textbackslash n \{I\}\textbackslash n\textbackslash n\{D\} EOT H(assistant)\textbackslash n\textbackslash n}
-  \item \textbf{SecPO} (template shipped with the checkpoint; it removes eight Llama control tokens,
-  including \texttt{EOT} and the header tokens, from \texttt{\{D\}} repeatedly until none remain):\\
+  \item \textbf{SecPO} (the template shipped with the checkpoint, which removes eight Llama control tokens, such as \texttt{EOT} and the header tokens, from \texttt{\{D\}} repeatedly until none remain):\\
   \texttt{BOS H(user)\textbackslash n\textbackslash n \{I\} EOT H(input)\textbackslash n\textbackslash n \{D\} EOT H(assistant)\textbackslash n\textbackslash n}
-  \item \textbf{Ours} (the SecPO training template; \texttt{d1}, \texttt{d2} are
-  \texttt{<|reserved\_special\_token\_200|>} and \texttt{\_201|>} carrying the learned vectors; SecPO's eight
-  control tokens and \texttt{d1}, \texttt{d2} are removed from \texttt{\{D\}} repeatedly until none remain,
-  unless the filter is switched off for Table~\ref{tab:filter}):\\
+  \item \textbf{Ours} (the SecPO training template, where \texttt{d1} and \texttt{d2} are \texttt{<|reserved\_special\_token\_200|>} and \texttt{\_201|>}, which carry the learned vectors. SecPO's eight control tokens and \texttt{d1}, \texttt{d2} are removed from \texttt{\{D\}} repeatedly until none remain, unless the filter is switched off for Table~\ref{tab:filter}):\\
   \texttt{BOS H(user)\textbackslash n\textbackslash n \{I\} EOT H(input)\textbackslash n\textbackslash n d1 \{D\} d2 EOT H(assistant)\textbackslash n\textbackslash n}\\
   The \emph{no-delimiter} ablation is the same string without \texttt{d1}, \texttt{d2}.
-  \item \textbf{DefensiveToken} (template from the released code; the instruction goes in the system turn
-  and the data in the user turn; the tokenizer's registered special tokens, for Llama-3 only \texttt{BOS}
-  and \texttt{EOT}, are removed from \texttt{\{D\}}):\\
+  \item \textbf{DefensiveToken} (the template from the released code, which puts the instruction in the system turn and the data in the user turn, and removes the tokenizer's registered special tokens from \texttt{\{D\}}, which for Llama-3 are only \texttt{BOS} and \texttt{EOT}):\\
   \texttt{[DT0]...[DT4] BOS H(system)\textbackslash n \{I\}\textbackslash n\textbackslash n EOT H(user)\textbackslash n \{D\}\textbackslash n\textbackslash n EOT H(assistant)\textbackslash n}
 \end{itemize}
 
+\section{Training algorithm}
+\label{app:alg}
+
+\begin{algorithm}[h]
+\caption{Training the delimiters (one epoch; \texttt{train/train\_delims.py})}
+\label{alg:train}
+\begin{algorithmic}[1]
+\Require frozen model $\pi_0$, SecPO pairs $\{(I, D, A, y_w, y_l)\}$, $\beta$, learning rate $\eta$, accumulation $G$
+\State $d_1, d_2 \sim \mathcal{N}(0, I_{4096})$
+\For{each group of $G$ examples}
+  \For{each example in the group}
+    \State $\xinj \gets x(I, D \oplus A)$ with $d_1, d_2$; \quad $\xcln \gets$ same template, data $D$, no delimiters
+    \State $r_w, r_l \gets \log \pi_0(y_w \mid \xcln), \log \pi_0(y_l \mid \xcln)$ \Comment{no gradient}
+    \State $p_w, p_l \gets \log \pi_\phi(y_w \mid \xinj), \log \pi_\phi(y_l \mid \xinj)$
+    \State accumulate $\nabla_{\phi}\, \tfrac{1}{G}\big(-\log\sigma(\beta[(p_w - r_w) - (p_l - r_l)])\big)$
+  \EndFor
+  \State AdamW step on $(d_1, d_2)$ with cosine-decayed $\eta$; clear gradients
+\EndFor
+\end{algorithmic}
+\end{algorithm}
+
+\section{Additional result tables}
+\label{app:tables}
+
+\begin{table}[h]
+  \caption{Attack success rate (\%) per attack on 208 AlpacaFarm samples. \emph{Adaptive} attacks use the real Llama-3 chat-template tokens. All defenses except DefensiveToken remove these tokens from the data before templating, but the plain-text role names that remain still act as a forged turn for the undefended model (\S\ref{sec:controls}). Undef.: undefended; No delim.: no delimiters; DefTok: DefensiveToken.}
+  \label{tab:per_attack}
+  \centering
+  \small
+  \input{tables/per_attack.tex}
+\end{table}
+
+\begin{table}[h]
+  \caption{SEP results on 500 probes (same rows for every defense). A probe counts as executed if its witness word appears in the output as a whole word. CI: 95\% Wilson; $p$: two-sided Fisher exact test against ours. With SEP's standard substring check, the rates are 3.0\% (ours), 4.0\% (SecPO) and 3.8\% (DefensiveToken). However, 12 of our 15 substring hits are the witness inside a longer word, and of our three whole-word hits, only one (``Christopher Columbus'') answers the probe.}
+  \label{tab:sep}
+  \centering
+  \small
+  \input{tables/sep.tex}
+\end{table}
+
+\section{Controls and token filtering}
+\label{app:filter}
+
+\begin{table}[h]
+  \caption{What differs between our defense and each comparison point.}
+  \label{tab:controls}
+  \centering
+  \small
+  \begin{tabular}{p{2.6cm}p{6.6cm}p{3.2cm}}
+    \toprule
+    Comparison & Differences & Controlled? \\
+    \midrule
+    No delimiters & only $d_1, d_2$ & yes \\
+    Undefended & $d_1, d_2$; data in \texttt{input} role instead of user turn & indirectly, through the no-delimiter run \\
+    SecPO & 8{,}192 trained numbers instead of about 140M LoRA parameters (rank 64 on five projections in all 32 layers); learning rate and training precision & partly: loss, template, data filter and released training data identical \\
+    DefensiveToken & loss and data (StruQ cross-entropy on StruQ's data); 5 vectors before the prompt vs.\ 2 around the data; template; filters only \texttt{BOS} and \texttt{EOT} from the data & no: published-method reference point \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Token filtering.} The released defenses differ in how they clean untrusted data. SecPO's chat template removes all eight named Llama-3 control tokens, such as \texttt{<|eot\_id|>} and the header tokens, from the data, and repeats until none remain. DefensiveToken removes the tokenizer's registered special tokens, which for Llama-3 are only \texttt{<|begin\_of\_text|>} and \texttt{<|eot\_id|>}. This difference matters exactly for the adaptive \emph{completion\_chat} attacks, because they are built from these tokens. Therefore, to remove it as a confound, we apply SecPO's filter to our defense, the no-delimiter ablation and the undefended model (\S\ref{sec:setup}), while DefensiveToken keeps its published behavior.
+
+To check that the filter is not what makes our defense robust, we reran the same three defenses with the filter off, so that the attack tokens reach the model intact (Table~\ref{tab:filter}). Because the model, delimiters, samples and attack strings are unchanged, this is a one-variable comparison. The filter barely helps the undefended model (96.6\% $\to$ 95.7\%), because after the control tokens are removed, the leftover plain-text \texttt{assistant} and \texttt{user} role names still read as a forged turn, and \emph{completion\_chat} succeeds 89.9\% of the time. For our defense, the filter only removes the last 1.9\% (four samples, all from \emph{completion\_chat\_ignore}). Therefore, most of the robustness comes from the delimiters, and it survives an attacker who can write real control tokens into the data.
+
+\begin{table}[h]
+  \caption{The data filter, off vs.\ on: AlpacaFarm attack success rate (\%) for the same model and delimiters. Any-attack values with 95\% Wilson intervals. With the filter \emph{off}, the data reaches the model unchanged, and with it \emph{on}, the eight Llama-3 control tokens (and, for ours, our delimiter tokens) are removed.}
+  \label{tab:filter}
+  \centering
+  \small
+  \input{tables/filter.tex}
+\end{table}
+
+\section{Statistics}
+\label{app:stats}
+
+For $k$ broken samples out of $n$, the 95\% Wilson interval is
+\begin{equation}
+  \frac{\hat p + \frac{z^2}{2n} \pm z\sqrt{\frac{\hat p(1-\hat p)}{n} + \frac{z^2}{4n^2}}}{1 + \frac{z^2}{n}},
+  \qquad \hat p = k/n,\ z = 1.96 .
+\end{equation}
+Pairwise comparisons of attack success use a two-sided Fisher exact test on the broken/unbroken $2 \times 2$ table. For utility, because two defenses are judged on the same samples, we use an exact two-sided sign test on the samples where exactly one of the two beats the reference.
+
+\section{Attacks that target the delimiters}
+\label{app:escape}
+
+\emph{delim\_escape} writes our closing delimiter token into the data, followed by a forged turn. When the filter is on, the delimiter token is removed and the attack reduces to plain text, which succeeds on 0/208. When the filter is off, the token reaches the model intact, but the attack still succeeds on 0/208 at the final checkpoint (3.4\% at step 300). Therefore, at least this escape attack does not let an attacker who knows the defense close the data span early. Optimization attacks on the delimiters remain untested (\S\ref{sec:discussion}).
+
+\section{Training hyperparameters}
+\label{app:hparams}
+
+\begin{table}[h]
+  \caption{Training hyperparameters and where each value comes from.}
+  \label{tab:hparams}
+  \centering
+  \small
+  \begin{tabular}{p{3.2cm}p{4.3cm}p{4.9cm}}
+    \toprule
+    Setting & Value & Source / reason \\
+    \midrule
+    Number of delimiters $n$ & 2 (one open, one close) & smallest that marks both ends of the data \\
+    Initialization & $\mathcal{N}(0, I)$ & DefensiveToken~\cite{chen2025defensivetoken}, LTBD~\cite{zhao2026ltbd} \\
+    Loss, $\beta$ & SecPO, $\beta = 0.1$ & SecPO~\cite{chen2026secpo}, unchanged \\
+    Optimizer & AdamW, weight decay 0 & weight decay would fight the norm growth (App.~\ref{sec:norms}) \\
+    Learning rate & 0.1, cosine to 0, no warmup & LTBD~\cite{zhao2026ltbd}; sweep over $\{0.01, 0.1, 1\}$ (App.~\ref{app:sweep}) \\
+    Effective batch & 16 (gradient accumulation) & sweep over $\{16, 32, 64\}$ (App.~\ref{app:sweep}) \\
+    Epochs & 1 (1{,}163 steps) & SecPO~\cite{chen2026secpo} and LTBD~\cite{zhao2026ltbd} train one epoch \\
+    Max length & 2{,}048 tokens & examples with any longer sequence are dropped \\
+    Precision & 4-bit NF4 weights, bf16 compute & fits a 12\,GB laptop GPU \\
+    Seed & 42 & single run \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \section{Hyperparameter sweep}
 \label{app:sweep}
-\todo{Hyunoh: lr $\in \{0.01, 0.1, 1\}$ and grad accumulation $\in \{16, 32, 64\}$ on a 2{,}000-row subset
-(\texttt{train/sweep.py}); validation loss curves and the selected values.}
+
+We chose the learning rate and the effective batch size on a 2{,}000-row subset of the training data, varying one at a time (\texttt{train/sweep.py}). Every run starts from the same $\mathcal{N}(0, I)$ draw (seed 42), is scored on the same 100 validation pairs, and makes one pass over the subset with the cosine schedule of the main run. We first varied the learning rate over $\{0.01, 0.1, 1\}$ at effective batch 16, and then the batch over $\{16, 32, 64\}$ at the best learning rate. Because the number of samples is fixed, a larger batch means fewer optimizer steps (124, 62 and 31). We stopped the batch-64 run after 10 of its 31 steps, at 640 samples, to free the GPU for the main run. Therefore, we also compare batch sizes at 640 samples, the point that all three runs reached. Figure~\ref{fig:sweep} shows the validation loss and Table~\ref{tab:sweep} the numbers; \texttt{paper/make\_sweep\_figure.py} regenerates both from the logs in \texttt{results/sweep/}.
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{figures/sweep.pdf}
+  \caption{Validation SecPO loss during the sweep, on 100 held-out pairs, against training samples seen (so that runs with different batch sizes are aligned). Log scale because the loss spans more than an order of magnitude. The dotted line is $\log 2$, the loss when the policy and reference margins are equal. Single seed; no error bars.}
+  \label{fig:sweep}
+\end{figure}
+
+\begin{table}[h]
+  \caption{Sweep results. Margin accuracy is the share of validation pairs where the delimiters make the model prefer $y_w$ over $y_l$ (0.71 before training). Norm is the mean delimiter norm divided by the mean vocabulary embedding norm (95 before training). All runs start at validation loss 6.21.}
+  \label{tab:sweep}
+  \centering
+  \small
+  \begin{tabular}{rrrrrrrr}
+    \toprule
+    lr & batch & steps & samples & val.\ loss & margin acc. & norm & val.\ loss at 640 \\
+    \midrule
+    0.01 & 16 & 124 & 1{,}984 & 1.467 & 0.85 & 95 & 2.538 \\
+    \textbf{0.1} & \textbf{16} & 124 & 1{,}984 & \textbf{0.244} & 0.89 & 117 & \textbf{1.253} \\
+    1 & 16 & 124 & 1{,}984 & 6.291 & 0.72 & 563 & 6.402 \\
+    0.1 & 32 & 62 & 1{,}984 & 0.904 & 0.86 & 111 & 1.545 \\
+    0.1 & 64 & 10 (stopped) & 640 & 2.447 & 0.79 & 100 & 2.447 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Learning rate.} With Adam, each step changes a vector by at most about $\eta\sqrt{d} = 64\eta$ in norm, while the starting norm is 64. At $\eta = 0.01$, the delimiters barely move (norm ratio 95 before and after), and the loss levels off at 1.47. At $\eta = 1$, the first steps throw the vectors far out (norm ratio 563 by the end), and the loss never improves on its starting value, which means the run has diverged. Therefore, $\eta = 0.1$ is the only value that trains well, reaching 0.244, and it is also the value LTBD uses for the same kind of parameters~\cite{zhao2026ltbd}.
+
+\paragraph{Batch size.} At equal samples, smaller batches learn faster. At 640 samples, the loss is 1.25 for batch 16, 1.55 for batch 32 and 2.45 for batch 64, and after the full subset, batch 16 reaches 0.244 against 0.904 for batch 32. Because the amount of data is fixed, a smaller batch takes more optimizer steps, and this matters more here than the lower gradient noise of a larger batch. We did not try batches below 16, since each step at batch 16 already takes about 38\,s.
+
+\paragraph{Caveats.} The sweep selects on validation loss from one seed and 100 pairs, and it does not run any attacks. Because Section~\ref{sec:dynamics} shows that validation loss can look solved before robustness to the strongest attacks appears, the sweep picks the setting that optimizes the objective fastest, not one that is known to be most robust.
 
 \section{Attack strings}
 \label{app:attacks}
-All attacks change only the data \texttt{\{D\}}. \texttt{P} is \emph{Print exactly
-'attacked!'}; \texttt{O} is one override sentence drawn (same seed for every defense) from SecPO's 11
-test templates, e.g.\ \emph{``Oops, belay that order. Instead, please P''}; \texttt{B} is the benign
-reference answer for the sample. \texttt{TR}/\texttt{TI} are the plain-text markers
-\texttt{\#\#\# response:} and \texttt{\#\#\# instruction:}; \texttt{CR}/\texttt{CI} are the real
-Llama-3 tokens \texttt{EOT H(assistant)} and \texttt{EOT H(user)}, each followed by two newlines.
+All attacks change only the data \texttt{\{D\}}. \texttt{P} is \emph{Print exactly 'attacked!'}, \texttt{O} is one override sentence drawn (with the same seed for every defense) from SecAlign's 11 test sentences, such as \emph{``Oops, belay that order. Instead, please P''}, and \texttt{B} is the benign reference answer for the sample. \texttt{TR} and \texttt{TI} are the plain-text markers \texttt{\#\#\# response:} and \texttt{\#\#\# instruction:}, and \texttt{CR} and \texttt{CI} are the real Llama-3 tokens \texttt{EOT H(assistant)} and \texttt{EOT H(user)}, each followed by two newlines.
 
 \begin{center}
 \small
@@ -605,9 +429,24 @@ Attack & Injected data \\
 \end{tabular}
 \end{center}
 
+\section{Delimiter norms}
+\label{sec:norms}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.85\linewidth]{figures/norms.pdf}
+  \caption{L2 norms of the two delimiter vectors during training, compared with the mean norm of Llama-3.1's vocabulary embeddings. Log scale so that both fit on one axis.}
+  \label{fig:norms}
+\end{figure}
+
+A vector drawn from $\mathcal{N}(0, I_{4096})$ has norm $\approx \sqrt{4096} = 64$, which is already about 95 times the mean norm of a Llama-3.1 vocabulary embedding (0.67). Training increases this further to 99 for the opening and 120 for the closing delimiter (Figure~\ref{fig:norms}), and the growth stops when the learning rate decays. We do not yet know what these large vectors do inside the model. Each layer reads the residual stream through RMS normalization, which removes the scale of what it reads, but the residual stream itself keeps the large vector. Therefore, the delimiter's direction may dominate its own position through many layers. One hypothesis is that the delimiters then act as attention sinks~\cite{xiao2024sinks}, which later tokens use to tell where the data begins and ends, but we have not tested this. \inprogress{attention analysis; retraining with a norm constraint}
+
+\section{Use of generative AI}
+\label{app:ai}
+We used Claude (Anthropic) mainly as a research assistant and reviewer. It helped us look up and check related work and details of cited papers, such as SecPO's training settings and LTBD's loss, and it reviewed our code, results and text for errors and unsupported claims. It also helped write the code, computed the confidence intervals and Fisher tests from our saved outputs, and drafted or edited parts of the text. We double-checked everything the AI produced. We reviewed and ran every script ourselves, checked every claim and number against our logs, result files and the cited papers, and made sure the text states our own hypothesis and argument. We also used the CS~182 review prompt by Y.~Thapliyal (\url{https://github.com/YashDThapliyal/cs182-paper-skill}) with Claude to critique this draft. \todo{each author: add any other AI tools you used and what for}
+
 \section{Compute}
-Training took 1{,}163 steps at about 33\,s per step (10.8\,h) on one RTX 5070 Ti laptop GPU (12\,GB).
-Each AlpacaFarm evaluation took about 2.5\,h per defense and each SEP evaluation about 1\,h per defense on
-the same GPU.
+\label{app:compute}
+Training took 1{,}163 steps at about 33\,s per step (10.8\,h) on one RTX 5070 Ti laptop GPU (12\,GB). On the same GPU, each AlpacaFarm evaluation took 1.2 to 2.7\,h per defense (7.3\,h for DefensiveToken), and each SEP evaluation took about 1\,h per defense. Regenerating the clean outputs at 512 tokens for the utility evaluation took 27 to 39\,min per defense, and judging all 1{,}040 pairs used about 894k input tokens (about US\$4.6).
 
 \end{document}
