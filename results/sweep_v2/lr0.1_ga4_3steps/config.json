@@ -1,0 +1,28 @@
+{
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "tokens": "all",
+  "data": "data/processed/secpo_v2_{tag}",
+  "lr": 0.1,
+  "beta": 0.1,
+  "max_length": 2048,
+  "grad_accum": 4,
+  "max_steps": 3,
+  "val_size": 8,
+  "val_every": 3,
+  "val_limit": 4,
+  "log_every": 5,
+  "save_every": 3,
+  "out": "outputs/smoke_v2_{tag}",
+  "load_in_4bit": true,
+  "dtype": "bfloat16",
+  "seed": 42,
+  "train_limit": 32,
+  "init": "template",
+  "version": 2,
+  "tokens_resolved": [
+    "header",
+    "role",
+    "end_header",
+    "eot"
+  ]
+}
