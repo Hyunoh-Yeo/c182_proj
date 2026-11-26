@@ -74,7 +74,7 @@ def load_defense(a, ap):
         if a.name == "secpo":
             ap.error("--model does not apply to secpo; use --checkpoint")
         kw["model_id"] = a.model
-    if a.name in ("secpo", "delims"):
+    if a.name in ("secpo", "delims", "delims_v2"):
         if not a.checkpoint:
             ap.error(f"{a.name} needs --checkpoint")
         kw["checkpoint"] = a.checkpoint
@@ -82,11 +82,11 @@ def load_defense(a, ap):
         if not a.embeddings:
             ap.error("defensivetoken needs --embeddings")
         kw["embeddings_path"] = a.embeddings
-    if a.name == "delims":
+    if a.name in ("delims", "delims_v2"):
         kw["use_delims"] = not a.no_delims
     elif a.no_delims:
         ap.error("--no-delims only applies to delims")
-    if a.name in ("delims", "undefended"):
+    if a.name in ("delims", "delims_v2", "undefended"):
         kw["filter_data"] = not a.no_filter
     elif a.no_filter:
         ap.error("--no-filter only applies to delims and undefended")
@@ -113,7 +113,7 @@ def pick_attacks(a, d):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("name", choices=["undefended", "secpo", "defensivetoken", "delims"])
+    ap.add_argument("name", choices=["undefended", "secpo", "defensivetoken", "delims", "delims_v2"])
     ap.add_argument("--checkpoint", help="secpo: path or HF id; delims: delims_step<N>.pt")
     ap.add_argument("--embeddings", help="defensivetoken: defensivetokens.json or setup.py dir")
     ap.add_argument("--model", help="base model id, e.g. meta-llama/Llama-3.2-1B-Instruct")

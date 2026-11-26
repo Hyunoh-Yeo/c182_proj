@@ -94,7 +94,7 @@ def save_results(results: list[dict], baseline_name: str, mode: str) -> Path:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("name", choices=["undefended", "secpo", "defensivetoken", "delims"])
+    ap.add_argument("name", choices=["undefended", "secpo", "defensivetoken", "delims", "delims_v2"])
     ap.add_argument("--model", help="base model id (undefended / defensivetoken / delims)")
     ap.add_argument("--checkpoint", help="secpo: path or HF id; delims: delims_step<N>.pt")
     ap.add_argument("--embeddings", help="DefensiveToken vectors JSON")
@@ -115,7 +115,7 @@ def main():
         if args.name == "secpo":
             ap.error("--model does not apply to secpo; use --checkpoint")
         kw["model_id"] = args.model
-    if args.name in ("secpo", "delims"):
+    if args.name in ("secpo", "delims", "delims_v2"):
         if not args.checkpoint:
             ap.error(f"{args.name} needs --checkpoint")
         kw["checkpoint"] = args.checkpoint
@@ -123,11 +123,11 @@ def main():
         if not args.embeddings:
             ap.error("defensivetoken needs --embeddings")
         kw["embeddings_path"] = args.embeddings
-    if args.name == "delims":
+    if args.name in ("delims", "delims_v2"):
         kw["use_delims"] = not args.no_delims
     elif args.no_delims:
         ap.error("--no-delims only applies to delims")
-    if args.name in ("delims", "undefended"):
+    if args.name in ("delims", "delims_v2", "undefended"):
         kw["filter_data"] = not args.no_filter
     elif args.no_filter:
         ap.error("--no-filter only applies to delims and undefended")

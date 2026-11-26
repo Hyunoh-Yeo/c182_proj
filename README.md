@@ -172,6 +172,30 @@ python eval/utility_judge.py ours=<ours .jsonl> undefended=<...> secpo=<...> def
 The judge saves every judgment in `annotations.jsonl`, so the win-rate table can be rebuilt from the saved
 file without calling the API again (rerun the same command; cached judgments are reused).
 
+## V2: template-token variant (in progress)
+
+V1 (the paper) inserts two new delimiter vectors around the data. V2, suggested by our TA, inserts nothing:
+the chat-template tokens around the data (`<|start_header_id|>`, `input`, `<|end_header_id|>` before it and
+`<|eot_id|>` after it) get trainable embeddings at those positions only, starting from their original
+embeddings, so training starts exactly at the undefended model on SecPO's prompt. The same tokens elsewhere
+in the prompt stay frozen. V1 files are unchanged; V2 lives in files ending in `_v2`.
+
+| Step | V1 | V2 |
+|---|---|---|
+| Training data | `data/make_data.py` | `data/make_data_v2.py` |
+| Training | `train/train_delims.py` | `train/train_delims_v2.py` |
+| Loading for evaluation | `baselines/delims.py` (`delims`) | `baselines/delims_v2.py` (`delims_v2`) |
+
+```
+python data/make_data_v2.py
+python train/train_delims_v2.py --model meta-llama/Llama-3.1-8B-Instruct --load_in_4bit --lr 0.1 --grad_accum 16 --seed 42
+python attacks/run_attacks.py delims_v2 --checkpoint outputs/v2_all_lr0.1_ga16_template/delims_v2_step<N>.pt --attacks all --four-bit
+python eval/run_eval.py delims_v2 --checkpoint outputs/v2_all_lr0.1_ga16_template/delims_v2_step<N>.pt --four-bit --sample 500 --seed 42
+```
+
+`--tokens header,eot` (in both `make_data_v2.py` and `train_delims_v2.py`) trains only some of the four
+template tokens, and `--init std_normal` starts from N(0, I) as V1 does. Results are not in yet.
+
 ## Notes for reproducing
 
 - Greedy decoding throughout, so reruns of steps 4 to 6 should give the same outputs on the same hardware
