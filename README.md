@@ -184,17 +184,19 @@ in the prompt stay frozen. V1 files are unchanged; V2 lives in files ending in `
 |---|---|---|
 | Training data | `data/make_data.py` | `data/make_data_v2.py` |
 | Training | `train/train_delims.py` | `train/train_delims_v2.py` |
+| Learning-rate sweep | `train/sweep.py` → `results/sweep/` | `train/sweep_v2.py` → `results/sweep_v2/` |
 | Loading for evaluation | `baselines/delims.py` (`delims`) | `baselines/delims_v2.py` (`delims_v2`) |
 
 ```
 python data/make_data_v2.py
-python train/train_delims_v2.py --model meta-llama/Llama-3.1-8B-Instruct --load_in_4bit --lr 0.1 --grad_accum 16 --seed 42
-python attacks/run_attacks.py delims_v2 --checkpoint outputs/v2_all_lr0.1_ga16_template/delims_v2_step<N>.pt --attacks all --four-bit
-python eval/run_eval.py delims_v2 --checkpoint outputs/v2_all_lr0.1_ga16_template/delims_v2_step<N>.pt --four-bit --sample 500 --seed 42
+python train/train_delims_v2.py --model meta-llama/Llama-3.1-8B-Instruct --load_in_4bit --lr 1e-3 --grad_accum 16 --seed 42
+python attacks/run_attacks.py delims_v2 --checkpoint outputs/v2_all_lr0.001_ga16_template/delims_v2_step<N>.pt --attacks all --four-bit
+python eval/run_eval.py delims_v2 --checkpoint outputs/v2_all_lr0.001_ga16_template/delims_v2_step<N>.pt --four-bit --sample 500 --seed 42
 ```
 
 `--tokens header,eot` (in both `make_data_v2.py` and `train_delims_v2.py`) trains only some of the four
-template tokens, and `--init std_normal` starts from N(0, I) as V1 does. Results are not in yet.
+template tokens, and `--init std_normal` starts from N(0, I) as V1 does. The full run uses lr 1e-3, not V1's 0.1:
+at 0.1 the validation loss blows up within 3 steps (`results/sweep_v2/`). Results are not in yet.
 
 ## Notes for reproducing
 

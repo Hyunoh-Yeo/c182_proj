@@ -9,3 +9,5 @@ Short runs of `train/train_delims_v2.py` (all four template tokens, `--init temp
 | `lr0.1_ga4_3steps` | 5.68 | 3 | 156.66 | 0.00 → 0.50 | 8.829, 8.240, 8.197, 8.617 |
 
 `lr0.1_ga4_3steps` is the 3-step smoke test (32 training rows, 4 validation pairs, so its step-0 loss differs from the other two, which use 480 training rows and 100 validation pairs): lr 0.1 (V1's value) moves every vector by about 6.4 in the first step, 100 to 200 times the norm of the special tokens, and the validation loss jumps to 156.7. `lr0.001` learns steadily; `lr0.0001` barely moves in 30 steps. We use lr 1e-3 for the full V2 run.
+
+To rerun: `python train/sweep_v2.py smoke` and `python train/sweep_v2.py lr` (outputs go to the git-ignored `outputs/`), then `python train/sweep_v2.py copy` to copy each run's `config.json` and `log.jsonl` here.
